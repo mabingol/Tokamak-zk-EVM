@@ -301,146 +301,56 @@ mod tests {
 
     #[test]
     fn test_divide_x() {
-        let x_size = 2usize.pow(10);
-        let y_size = 2usize.pow(5);
+        let x_size = 2usize.pow(8);
+        let y_size = 2usize.pow(3);
         let numerator_coeffs = ScalarCfg::generate_random(x_size * y_size);
         let numerator = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&numerator_coeffs), x_size, y_size);
         
-        let denom_x_size = 2usize.pow(3); // 8
-        let mut denominator_coeffs = ScalarCfg::generate_random(denom_x_size);
-        
-        denominator_coeffs[denom_x_size - 1] = ScalarField::from_u32(1);
+        let denom_x_size = 2usize.pow(4);
+        let denominator_coeffs = ScalarCfg::generate_random(denom_x_size);
         let denominator = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&denominator_coeffs), denom_x_size, 1);
         
-        println!("denominator x_size: {}, y_size: {}", denominator.x_size, denominator.y_size);
-        println!("denominator x_degree: {}", denominator.x_degree);
+        let (quotient, remainder) = numerator.divide_x(&denominator);
         
-        let division_result = std::panic::catch_unwind(|| {
-            numerator.divide_x(&denominator)
-        });
+        let x = ScalarCfg::generate_random(1)[0];
+        let y = ScalarCfg::generate_random(1)[0];
         
-        match division_result {
-            Ok((quotient, remainder)) => {
-                println!("remainder x_degree: {}", remainder.x_degree);
-                
-                let x = ScalarCfg::generate_random(1)[0];
-                let y = ScalarCfg::generate_random(1)[0];
-                
-                let numerator_eval = numerator.eval(&x, &y);
-                let denominator_eval = denominator.eval(&x, &y);
-                let quotient_eval = quotient.eval(&x, &y);
-                let remainder_eval = remainder.eval(&x, &y);
-                
-                let reconstructed_eval = denominator_eval * quotient_eval + remainder_eval;
-                assert!(numerator_eval.eq(&reconstructed_eval));
-            },
-            Err(e) => {
-                println!("Division operation failed. Using simpler test instead.");
-                
-                let small_x_size = 8; // 2^3
-                let small_y_size = 2; // 2^1
-                let small_num_coeffs = ScalarCfg::generate_random(small_x_size * small_y_size);
-                let small_num = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&small_num_coeffs), small_x_size, small_y_size);
-                
-                let small_denom_x_size = 4; // 2^2
-                let mut small_denom_coeffs = ScalarCfg::generate_random(small_denom_x_size);
-                small_denom_coeffs[small_denom_x_size - 1] = ScalarField::from_u32(1);
-                let small_denom = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&small_denom_coeffs), small_denom_x_size, 1);
-                
-                let (small_quo, small_rem) = small_num.divide_x(&small_denom);
-                
-                let x = ScalarCfg::generate_random(1)[0];
-                let y = ScalarCfg::generate_random(1)[0];
-                
-                let num_eval = small_num.eval(&x, &y);
-                let denom_eval = small_denom.eval(&x, &y);
-                let quo_eval = small_quo.eval(&x, &y);
-                let rem_eval = small_rem.eval(&x, &y);
-                
-                let reconstructed = denom_eval * quo_eval + rem_eval;
-                assert!(num_eval.eq(&reconstructed));
-            }
-        }
+        let numerator_eval = numerator.eval(&x, &y);
+        let denominator_eval = denominator.eval(&x, &y);
+        let quotient_eval = quotient.eval(&x, &y);
+        let remainder_eval = remainder.eval(&x, &y);
+        
+        let reconstructed_eval = denominator_eval * quotient_eval + remainder_eval;
+        assert!(numerator_eval.eq(&reconstructed_eval));
+        
+        assert!(remainder.x_degree < denominator.x_degree);
     }
 
     #[test]
     fn test_divide_y() {
-        let x_size = 2usize.pow(3); // 8
-        let y_size = 2usize.pow(8); // 256
+        let x_size = 2usize.pow(3);
+        let y_size = 2usize.pow(8);
         let numerator_coeffs = ScalarCfg::generate_random(x_size * y_size);
         let numerator = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&numerator_coeffs), x_size, y_size);
         
-        let denom_y_size = 2usize.pow(4); // 16
-        let mut denominator_coeffs = ScalarCfg::generate_random(denom_y_size);
-        
-        denominator_coeffs[denom_y_size - 1] = ScalarField::from_u32(1);
+        let denom_y_size = 2usize.pow(4);
+        let denominator_coeffs = ScalarCfg::generate_random(denom_y_size);
         let denominator = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&denominator_coeffs), 1, denom_y_size);
         
-        println!("denominator y_degree: {}", denominator.y_degree);
+        let (quotient, remainder) = numerator.divide_y(&denominator);
+
+        let x = ScalarCfg::generate_random(1)[0];
+        let y = ScalarCfg::generate_random(1)[0];
         
-        let test_x_size = 2;
-        let test_y_size = 4;
-        let test_coeffs = vec![ScalarField::from_u32(0); test_x_size * test_y_size];
-        let test_poly = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&test_coeffs), test_x_size, test_y_size);
+        let numerator_eval = numerator.eval(&x, &y);
+        let denominator_eval = denominator.eval(&x, &y);
+        let quotient_eval = quotient.eval(&x, &y);
+        let remainder_eval = remainder.eval(&x, &y);
         
-        let simple_y_size = 2;
-        let simple_coeffs = vec![ScalarField::from_u32(1), ScalarField::from_u32(1)]; // 1 + y
-        let simple_denom = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&simple_coeffs), 1, simple_y_size);
+        let reconstructed_eval = denominator_eval * quotient_eval + remainder_eval;
+        assert!(numerator_eval.eq(&reconstructed_eval));
         
-        println!("Testing with simple polynomials first");
-        let (simple_quo, simple_rem) = test_poly.divide_y(&simple_denom);
-        println!("Simple test passed");
-        
-        println!("Now trying with the actual test data");
-        println!("numerator x_size: {}, y_size: {}", numerator.x_size, numerator.y_size);
-        println!("denominator x_size: {}, y_size: {}", denominator.x_size, denominator.y_size);
-        
-        let division_result = std::panic::catch_unwind(|| {
-            numerator.divide_y(&denominator)
-        });
-        
-        match division_result {
-            Ok((quotient, remainder)) => {
-                println!("remainder y_degree: {}", remainder.y_degree);
-                
-                let x = ScalarCfg::generate_random(1)[0];
-                let y = ScalarCfg::generate_random(1)[0];
-                
-                let numerator_eval = numerator.eval(&x, &y);
-                let denominator_eval = denominator.eval(&x, &y);
-                let quotient_eval = quotient.eval(&x, &y);
-                let remainder_eval = remainder.eval(&x, &y);
-                
-                let reconstructed_eval = denominator_eval * quotient_eval + remainder_eval;
-                assert!(numerator_eval.eq(&reconstructed_eval));
-            },
-            Err(e) => {
-                println!("Division operation failed. Using simpler test instead.");
-                
-                let small_x_size = 2;
-                let small_y_size = 16; // 2^4
-                let small_num_coeffs = ScalarCfg::generate_random(small_x_size * small_y_size);
-                let small_num = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&small_num_coeffs), small_x_size, small_y_size);
-                
-                let small_denom_y_size = 4; // 2^2
-                let mut small_denom_coeffs = ScalarCfg::generate_random(small_denom_y_size);
-                small_denom_coeffs[small_denom_y_size - 1] = ScalarField::from_u32(1);
-                let small_denom = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&small_denom_coeffs), 1, small_denom_y_size);
-                
-                let (small_quo, small_rem) = small_num.divide_y(&small_denom);
-                
-                let x = ScalarCfg::generate_random(1)[0];
-                let y = ScalarCfg::generate_random(1)[0];
-                
-                let num_eval = small_num.eval(&x, &y);
-                let denom_eval = small_denom.eval(&x, &y);
-                let quo_eval = small_quo.eval(&x, &y);
-                let rem_eval = small_rem.eval(&x, &y);
-                
-                let reconstructed = denom_eval * quo_eval + rem_eval;
-                assert!(num_eval.eq(&reconstructed));
-            }
-        }
+        assert!(remainder.y_degree < denominator.y_degree);
     }
 
     #[test]
