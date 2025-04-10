@@ -301,8 +301,8 @@ mod tests {
 
     #[test]
     fn test_divide_x() {
-        let x_size = 2usize.pow(6); // 64
-        let y_size = 2usize.pow(3); // 8
+        let x_size = 2usize.pow(10);
+        let y_size = 2usize.pow(5);
         let numerator_coeffs = ScalarCfg::generate_random(x_size * y_size);
         let numerator = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&numerator_coeffs), x_size, y_size);
         

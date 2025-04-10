@@ -692,14 +692,14 @@ impl BivariatePolynomial for DensePolynomialExt {
         let rem_x_degree = denom_x_degree - 1;
         let rem_y_degree = numer_y_degree;
 
-        // let quo_x_size = quo_x_degree as usize + 1;
-        // let quo_y_size = quo_y_degree as usize + 1;
-        // let rem_x_size = rem_x_degree as usize + 1;
-        // let rem_y_size = rem_y_degree as usize + 1;
-        let quo_x_size = next_power_of_two(quo_x_degree as usize + 1);
-        let quo_y_size = next_power_of_two(quo_y_degree as usize + 1);
-        let rem_x_size = next_power_of_two(rem_x_degree as usize + 1);
-        let rem_y_size = next_power_of_two(rem_y_degree as usize + 1);
+        let quo_x_size = quo_x_degree as usize + 1;
+        let quo_y_size = quo_y_degree as usize + 1;
+        let rem_x_size = rem_x_degree as usize + 1;
+        let rem_y_size = rem_y_degree as usize + 1;
+        // let quo_x_size = next_power_of_two(quo_x_degree as usize + 1);
+        // let quo_y_size = next_power_of_two(quo_y_degree as usize + 1);
+        // let rem_x_size = next_power_of_two(rem_x_degree as usize + 1);
+        // let rem_y_size = next_power_of_two(rem_y_degree as usize + 1);
         
         let quo_size = quo_x_size * quo_y_size;
         let rem_size = rem_x_size * rem_y_size;
