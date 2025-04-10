@@ -288,10 +288,10 @@ mod tests {
 
         let ark_g1_point = Conversion::icicle_g1_affine_to_ark(&g1_point);
         let ark_g2_point = Conversion::icicle_g2_affine_to_ark(&g2_point);
-
+        println!("ark_g1_point: {:?}", ark_g1_point);
+        println!("ark_g2_point: {:?}", ark_g2_point);
         let pairing_result = Bls12_381::pairing(ark_g1_point, ark_g2_point);
-
-        let two = ark_bls12_381::Fr::from(2u64);
+        // println!("pairing_result: {:?}", pairing_result);
         if Conversion::verify_bilinearity(ark_g1_point, ark_g2_point) {
             println!("Bilinearity verified: e(2*G1, G2) == e(G1, G2)^2");
         } else {
@@ -301,35 +301,28 @@ mod tests {
 
     #[test]
     fn test_divide_x() {
-        // 더 작은 크기로 테스트 (안정성 향상)
         let x_size = 2usize.pow(6); // 64
         let y_size = 2usize.pow(3); // 8
         let numerator_coeffs = ScalarCfg::generate_random(x_size * y_size);
         let numerator = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&numerator_coeffs), x_size, y_size);
         
-        // x-단변수 다항식 생성 (y_size=1)
         let denom_x_size = 2usize.pow(3); // 8
         let mut denominator_coeffs = ScalarCfg::generate_random(denom_x_size);
-        // 최고차항(마지막 원소)에 0이 아닌 값 설정
+        
         denominator_coeffs[denom_x_size - 1] = ScalarField::from_u32(1);
         let denominator = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&denominator_coeffs), denom_x_size, 1);
         
-        // 분모의 차수 출력
         println!("denominator x_size: {}, y_size: {}", denominator.x_size, denominator.y_size);
         println!("denominator x_degree: {}", denominator.x_degree);
         
-        // 나눗셈이 실패할 가능성을 고려하여 실패했을 때 자세한 정보를 출력
         let division_result = std::panic::catch_unwind(|| {
             numerator.divide_x(&denominator)
         });
         
         match division_result {
             Ok((quotient, remainder)) => {
-                // 나머지의 차수 출력
                 println!("remainder x_degree: {}", remainder.x_degree);
                 
-                // 검증: numerator = denominator * quotient + remainder
-                // 랜덤한 x, y 값으로 다항식을 평가하여 확인
                 let x = ScalarCfg::generate_random(1)[0];
                 let y = ScalarCfg::generate_random(1)[0];
                 
@@ -338,13 +331,12 @@ mod tests {
                 let quotient_eval = quotient.eval(&x, &y);
                 let remainder_eval = remainder.eval(&x, &y);
                 
-                // 나눗셈의 결과로 원래 다항식이 복원되는지 확인
                 let reconstructed_eval = denominator_eval * quotient_eval + remainder_eval;
                 assert!(numerator_eval.eq(&reconstructed_eval));
             },
             Err(e) => {
                 println!("Division operation failed. Using simpler test instead.");
-                // 더 간단한 테스트로 대체
+                
                 let small_x_size = 8; // 2^3
                 let small_y_size = 2; // 2^1
                 let small_num_coeffs = ScalarCfg::generate_random(small_x_size * small_y_size);
@@ -357,7 +349,6 @@ mod tests {
                 
                 let (small_quo, small_rem) = small_num.divide_x(&small_denom);
                 
-                // 랜덤한 x, y 값으로 다항식을 평가하여 확인
                 let x = ScalarCfg::generate_random(1)[0];
                 let y = ScalarCfg::generate_random(1)[0];
                 
@@ -374,56 +365,44 @@ mod tests {
 
     #[test]
     fn test_divide_y() {
-        // 랜덤한 크기와 계수로 테스트 (크기는 2의 거듭제곱으로 설정)
         let x_size = 2usize.pow(3); // 8
         let y_size = 2usize.pow(8); // 256
         let numerator_coeffs = ScalarCfg::generate_random(x_size * y_size);
         let numerator = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&numerator_coeffs), x_size, y_size);
         
-        // y-단변수 다항식 생성 (x_size=1)
-        // 차수가 0이 되지 않도록 분모 다항식의 최고차항 계수를 명시적으로 설정
         let denom_y_size = 2usize.pow(4); // 16
         let mut denominator_coeffs = ScalarCfg::generate_random(denom_y_size);
-        // 최고차항(마지막 원소)에 0이 아닌 값 설정
+        
         denominator_coeffs[denom_y_size - 1] = ScalarField::from_u32(1);
         let denominator = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&denominator_coeffs), 1, denom_y_size);
         
-        // 분모의 차수 출력
         println!("denominator y_degree: {}", denominator.y_degree);
         
-        // 함수가 내부적으로 어떤 크기를 사용하는지 확인하기 위해 먼저 간단히 테스트
         let test_x_size = 2;
         let test_y_size = 4;
         let test_coeffs = vec![ScalarField::from_u32(0); test_x_size * test_y_size];
         let test_poly = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&test_coeffs), test_x_size, test_y_size);
         
-        // 간단한 다항식으로 먼저 테스트
         let simple_y_size = 2;
         let simple_coeffs = vec![ScalarField::from_u32(1), ScalarField::from_u32(1)]; // 1 + y
         let simple_denom = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&simple_coeffs), 1, simple_y_size);
         
-        // 단순한 테스트 실행
         println!("Testing with simple polynomials first");
         let (simple_quo, simple_rem) = test_poly.divide_y(&simple_denom);
         println!("Simple test passed");
         
-        // 실제 나눗셈 수행 (try-catch로 감싸기)
         println!("Now trying with the actual test data");
         println!("numerator x_size: {}, y_size: {}", numerator.x_size, numerator.y_size);
         println!("denominator x_size: {}, y_size: {}", denominator.x_size, denominator.y_size);
         
-        // 나눗셈이 실패할 가능성을 고려하여 실패했을 때 자세한 정보를 출력
         let division_result = std::panic::catch_unwind(|| {
             numerator.divide_y(&denominator)
         });
         
         match division_result {
             Ok((quotient, remainder)) => {
-                // 나머지의 차수 출력
                 println!("remainder y_degree: {}", remainder.y_degree);
                 
-                // 검증: numerator = denominator * quotient + remainder
-                // 랜덤한 x, y 값으로 다항식을 평가하여 확인
                 let x = ScalarCfg::generate_random(1)[0];
                 let y = ScalarCfg::generate_random(1)[0];
                 
@@ -432,13 +411,12 @@ mod tests {
                 let quotient_eval = quotient.eval(&x, &y);
                 let remainder_eval = remainder.eval(&x, &y);
                 
-                // 나눗셈의 결과로 원래 다항식이 복원되는지 확인
                 let reconstructed_eval = denominator_eval * quotient_eval + remainder_eval;
                 assert!(numerator_eval.eq(&reconstructed_eval));
             },
             Err(e) => {
                 println!("Division operation failed. Using simpler test instead.");
-                // 더 간단한 테스트로 대체
+                
                 let small_x_size = 2;
                 let small_y_size = 16; // 2^4
                 let small_num_coeffs = ScalarCfg::generate_random(small_x_size * small_y_size);
@@ -451,7 +429,6 @@ mod tests {
                 
                 let (small_quo, small_rem) = small_num.divide_y(&small_denom);
                 
-                // 랜덤한 x, y 값으로 다항식을 평가하여 확인
                 let x = ScalarCfg::generate_random(1)[0];
                 let y = ScalarCfg::generate_random(1)[0];
                 
