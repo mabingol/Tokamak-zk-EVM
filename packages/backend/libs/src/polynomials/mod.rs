@@ -332,6 +332,7 @@ impl BivariatePolynomial for DensePolynomialExt {
             panic!("Invalid matrix size for from_coeffs");
         }
         if x_size.is_power_of_two() == false || y_size.is_power_of_two() == false {
+            println!("x_size, y_size: {:?}, {:?}", x_size, y_size);
             panic!("The input sizes for from_coeffs must be powers of two.")
         }
         let poly = DensePolynomial::from_coeffs(coeffs, x_size as usize * y_size as usize);
@@ -690,10 +691,16 @@ impl BivariatePolynomial for DensePolynomialExt {
         let quo_y_degree = numer_y_degree;
         let rem_x_degree = denom_x_degree - 1;
         let rem_y_degree = numer_y_degree;
-        let quo_x_size = quo_x_degree as usize + 1;
-        let quo_y_size = quo_y_degree as usize + 1;
-        let rem_x_size = rem_x_degree as usize + 1;
-        let rem_y_size = rem_y_degree as usize + 1;
+
+        // let quo_x_size = quo_x_degree as usize + 1;
+        // let quo_y_size = quo_y_degree as usize + 1;
+        // let rem_x_size = rem_x_degree as usize + 1;
+        // let rem_y_size = rem_y_degree as usize + 1;
+        let quo_x_size = next_power_of_two(quo_x_degree as usize + 1);
+        let quo_y_size = next_power_of_two(quo_y_degree as usize + 1);
+        let rem_x_size = next_power_of_two(rem_x_degree as usize + 1);
+        let rem_y_size = next_power_of_two(rem_y_degree as usize + 1);
+        
         let quo_size = quo_x_size * quo_y_size;
         let rem_size = rem_x_size * rem_y_size;
 
@@ -721,6 +728,7 @@ impl BivariatePolynomial for DensePolynomialExt {
         let rem_coeffs = HostSlice::from_mut_slice(&mut rem_coeffs_vec);
         (DensePolynomialExt::from_coeffs(quo_coeffs, quo_x_size, quo_y_size), DensePolynomialExt::from_coeffs(rem_coeffs, rem_x_size, rem_y_size))
     }
+
 
     fn divide_y(&self, denominator: &Self) -> (Self, Self) where Self: Sized {
         let (numer_x_degree, numer_y_degree) = self.degree();
@@ -1042,4 +1050,11 @@ impl BivariatePolynomial for DensePolynomialExt {
         (q_x, q_y, r_x)
     }
 
+}
+
+fn next_power_of_two(n: usize) -> usize {
+    if n <= 1 {
+        return 1;
+    }
+    1 << (usize::BITS - (n - 1).leading_zeros())
 }
