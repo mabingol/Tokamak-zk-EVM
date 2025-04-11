@@ -14,6 +14,7 @@ mod tests {
     use ark_ff::{Field, PrimeField};
     use icicle_bls12_381::curve::{CurveCfg, G2CurveCfg};
     use icicle_core::curve::Curve;
+    use crate::vectors::{outer_product_two_vecs, outer_product_two_vecs_ep};
 
     use super::*;
     use crate::{conversion::Conversion, polynomials::{BivariatePolynomial, DensePolynomialExt}};
@@ -445,6 +446,67 @@ mod tests {
     }
 
     // More tests can be added as needed
+    #[test]
+    fn test_outer_product_comparison() {
+        use icicle_runtime::test_utilities;
+        
+        // Set test sizes
+        const TEST_SIZE_COL: usize = 32;
+        const TEST_SIZE_ROW: usize = 48;
+        
+        // Generate input vectors
+        let col_vec = ScalarCfg::generate_random(TEST_SIZE_COL).into_boxed_slice();
+        let row_vec = ScalarCfg::generate_random(TEST_SIZE_ROW).into_boxed_slice();
+        
+        // Create result buffers
+        let mut result1 = vec![ScalarField::zero(); TEST_SIZE_COL * TEST_SIZE_ROW].into_boxed_slice();
+        let mut result2 = vec![ScalarField::zero(); TEST_SIZE_COL * TEST_SIZE_ROW].into_boxed_slice();
+        
+        // Execute original function
+        // test_utilities::test_set_main_device();
+        outer_product_two_vecs(&col_vec, &row_vec, &mut result1);
+        
+        outer_product_two_vecs_ep(&col_vec, &row_vec, &mut result2);
+        
+        // Compare results
+        assert_eq!(result1.len(), result2.len(), "Result lengths differ");
+        
+        // Compare each element
+        for i in 0..result1.len() {
+            assert_eq!(
+                result1[i], 
+                result2[i], 
+                "Results differ at index {}: {} vs {}", 
+                i, 
+                result1[i], 
+                result2[i]
+            );
+        }
+        
+        // Test with different dimensions (column > row)
+        const TEST_SIZE_COL_LARGE: usize = 64;
+        const TEST_SIZE_ROW_SMALL: usize = 16;
+        
+        let col_vec_large = ScalarCfg::generate_random(TEST_SIZE_COL_LARGE).into_boxed_slice();
+        let row_vec_small = ScalarCfg::generate_random(TEST_SIZE_ROW_SMALL).into_boxed_slice();
+        
+        let mut result1_large = vec![ScalarField::zero(); TEST_SIZE_COL_LARGE * TEST_SIZE_ROW_SMALL].into_boxed_slice();
+        let mut result2_large = vec![ScalarField::zero(); TEST_SIZE_COL_LARGE * TEST_SIZE_ROW_SMALL].into_boxed_slice();
+        
+        outer_product_two_vecs(&col_vec_large, &row_vec_small, &mut result1_large);
+        outer_product_two_vecs_ep(&col_vec_large, &row_vec_small, &mut result2_large);
+        
+        for i in 0..result1_large.len() {
+            assert_eq!(
+                result1_large[i], 
+                result2_large[i], 
+                "Large-small test: Results differ at index {}", 
+                i
+            );
+        }
+        
+        println!("All tests passed: Both functions produce identical results.");
+    }
 }
 
 #[cfg(test)]
