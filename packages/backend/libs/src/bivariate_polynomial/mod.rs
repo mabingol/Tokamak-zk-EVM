@@ -376,6 +376,8 @@ impl BivariatePolynomial for DensePolynomialExt {
         cfg.columns_batch = true;
         ntt::ntt_inplace(&mut coeffs, ntt::NTTDir::kInverse, &cfg).unwrap();
 
+        ntt::release_domain::<Self::Field>().unwrap();
+
         let mut scaled_coeffs = coeffs;
         let vec_ops_cfg = VecOpsConfig::default();
 
@@ -465,6 +467,8 @@ impl BivariatePolynomial for DensePolynomialExt {
         cfg.batch_size = self.x_size as i32;
         cfg.columns_batch = true;
         ntt::ntt_inplace(evals, ntt::NTTDir::kForward, &cfg).unwrap();
+
+        ntt::release_domain::<Self::Field>().unwrap();
     }
 
     fn copy_coeffs<S: HostOrDeviceSlice<Self::Field> + ?Sized>(&self, start_idx: u64, coeffs: &mut S) {
