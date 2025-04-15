@@ -156,6 +156,9 @@ function refactoryPlacement(placements: Placements): Placements {
   if (outPlacements.get(PUB_OUT_PLACEMENT_INDEX)!.outPts.length > subcircuitInfoByName.get('bufferPubOut')!.Out_idx[1]) {
     throw new Error(`Synthesizer: Insufficient public output buffer length. Ask the qap-compiler for longer buffers.`)
   }
+  if (outPlacements.size > setupParams.s_max) {
+    throw new Error(`Synthesizer: The number of placements exceeds the parameter s_max. Ask the qap-compiler for more placements.`)
+  }
   return outPlacements
 }
 
@@ -269,25 +272,31 @@ export class Permutation {
     this.permGroup = this._buildPermGroup()
 
     // Initialization for the permutation polynomials in equation 8 of the paper
-    this.permutationY = Array.from({ length: this.placements.size }, (_, i) =>
-      Array.from({ length: setupParams.l_D - setupParams.l }, () => i),
-    )
-    // Example of (initial) permutation Y:
-    // [0,0,0]
-    // [1,1,1]
-    // [2,2,2]
-    // [3,3,3]
-    this.permutationX = Array.from({ length: this.placements.size }, () =>
-      Array.from({ length: setupParams.l_D - setupParams.l }, (_, j) => j),
-    )
-    // Example of (initial) permutation Z:
-    // [0,1,2]
-    // [0,1,2]
-    // [0,1,2]
-    // [0,1,2]
-    // "permutationY[h][i]=j and permutationY[h][i]=k" means that the i-th wire of the h-th placement is a copy of the k-th wire of the j-th placement.
+    const numPlacements = setupParams.l_D - setupParams.l;
+    const numWires = this.placements.size;
     
-    // Now finally correct permutationY and permutationZ according to permGroup
+    this.permutationY = Array.from({ length: numPlacements }, (_, h) =>
+      Array.from({ length: numWires }, (_, i) => i),
+    );
+    // Example:
+    // [
+    //   [0, 1, 2, 3],
+    //   [0, 1, 2, 3],
+    //   [0, 1, 2, 3]
+    // ]
+    
+    this.permutationX = Array.from({ length: numPlacements }, (_, h) =>
+      Array.from({ length: numWires }, (_, i) => h),
+    );
+    // Example:
+    // [
+    //   [0, 0, 0, 0],
+    //   [1, 1, 1, 1],
+    //   [2, 2, 2, 2]
+    // ]
+    // "permutationY[i][h]=j and permutationX[i][h]=k" means that the i-th wire of the h-th placement is a copy of the k-th wire of the j-th placement.
+    
+    // Now finally correct permutationY and permutationX according to permGroup
     this.permutationFile = this._correctPermutation()
   }
 
@@ -336,13 +345,13 @@ export class Permutation {
     let idxSetPubIn = new IdxSet(this.subcircuitInfoByName.get(this.placements.get(PUB_IN_PLACEMENT_INDEX)!.name)!)
     let idxSetPubOut = new IdxSet(this.subcircuitInfoByName.get(this.placements.get(PUB_OUT_PLACEMENT_INDEX)!.name)!)
     let a: string[] = []
-    if (idxSetPubIn.NInWires + idxSetPubOut.NOutWires != setupParams.l) {
+    if (idxSetPubIn.NInWires + idxSetPubOut.NOutWires > setupParams.l) {
       throw new Error('Incorrectness in the number of input and output variables.')
     }
     for (let globalIdx = 0; globalIdx < idxSetPubIn.NInWires; globalIdx++){
       a[globalIdx] = placementVariables[this.flattenMapInverse[globalIdx][0]].variables[this.flattenMapInverse[globalIdx][1]]
     }
-    for (let globalIdx = idxSetPubIn.NInWires; globalIdx < setupParams.l; globalIdx++){
+    for (let globalIdx = idxSetPubIn.NInWires; globalIdx <idxSetPubIn.NInWires + idxSetPubOut.NOutWires; globalIdx++){
       a[globalIdx] = placementVariables[this.flattenMapInverse[globalIdx][0]].variables[this.flattenMapInverse[globalIdx][1]]
     }
 
@@ -439,20 +448,25 @@ export class Permutation {
             throw new Error('permGroup is broken.')
           }
           permutationFile.push({
-            row: element.placementId,
-            col: element.globalWireId - setupParams.l,
-            Y: nextElement.placementId,
+            // wire id
+            row: element.globalWireId - setupParams.l,
+            // placement id
+            col: element.placementId,
+            // wire id
             X: nextElement.globalWireId - setupParams.l,
+            // placement id
+            Y: nextElement.placementId,
+            
           })
           const rowIdx = permutationFile[permutationFile.length - 1].row
           const colIdx = permutationFile[permutationFile.length - 1].col
-          if (rowIdx >= this.placements.size || colIdx >= setupParams.l_D - setupParams.l) {
+          if (colIdx >= this.placements.size || rowIdx >= setupParams.l_D - setupParams.l) {
             throw new Error('permGroup needs to be debugged')
           }
-          this.permutationY[rowIdx][colIdx] =
-            permutationFile[permutationFile.length - 1].Y
           this.permutationX[rowIdx][colIdx] =
             permutationFile[permutationFile.length - 1].X
+          this.permutationY[rowIdx][colIdx] =
+            permutationFile[permutationFile.length - 1].Y
         }
       }
     }
@@ -577,7 +591,7 @@ export class Permutation {
     }
     let permutationDetected = false
     const zeros = Array(setupParams.l_D).fill('0x00')
-    let b: string[][] = [] // ab.size = s_max \times l_D
+    let b: string[][] = [] // ab.size = l_D \times s_max
     for (const [placementId, placementVariablesEntry] of this.placementVariables.entries()) {
       const variables = placementVariablesEntry.variables
       const subcircuitInfo = this.subcircuitInfoByName.get(this.placements.get(placementId)!.name)!
@@ -595,8 +609,8 @@ export class Permutation {
     }
     for (let i = 0; i < b.length; i++) {
       for (let j = 0; j < setupParams.l_D - setupParams.l; j++) {
-        const i2 = this.permutationY[i][j]
-        const j2 = this.permutationX[i][j]
+        const i2 = this.permutationY[j][i]
+        const j2 = this.permutationX[j][i]
         if (i != i2 || j != j2) {
           permutationDetected = true
           if (b[i][j] != b[i2][j2]) {
