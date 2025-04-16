@@ -588,7 +588,7 @@ mod tests_vectors {
     use std::cmp;
     use crate::vector_operations::{gen_evaled_lagrange_bases, matrix_matrix_mul};
     
-    use crate::vectors::{outer_product_two_vecs, point_mul_two_vecs};
+    use crate::vector_operations::{outer_product_two_vecs, point_mul_two_vecs};
 
     macro_rules! scalar_vec {
         ( $( $x:expr ),* ) => {
@@ -1110,4 +1110,402 @@ pub mod test_polynomial_ep {
         
         println!("All resize tests are passed!");
     }
+
+    #[test]
+    fn test_mul() {
+        // Define test scenarios with various polynomial sizes
+        let test_cases = vec![
+            // (x_size_1, y_size_1, x_size_2, y_size_2)
+            (4, 4, 4, 4),     // Small equal sizes
+            (8, 8, 4, 4),     // First larger than second
+            (4, 4, 8, 8),     // Second larger than first
+            (8, 4, 4, 8),     // Different dimensions
+            (16, 16, 16, 16), // Larger sizes
+        ];
+        
+        for (x_size_1, y_size_1, x_size_2, y_size_2) in test_cases {
+            println!("Test case: ({},{}) * ({},{})", x_size_1, y_size_1, x_size_2, y_size_2);
+            
+            // Create first polynomial with random coefficients
+            let size_1 = x_size_1 * y_size_1;
+            let mut coeffs_1 = vec![ScalarField::zero(); size_1];
+            
+            // Fill with random values
+            for i in 0..size_1 {
+                coeffs_1[i] = ScalarCfg::generate_random(1)[0];
+            }
+            
+            // Create second polynomial with random coefficients
+            let size_2 = x_size_2 * y_size_2;
+            let mut coeffs_2 = vec![ScalarField::zero(); size_2];
+            
+            // Fill with random values
+            for i in 0..size_2 {
+                coeffs_2[i] = ScalarCfg::generate_random(1)[0];
+            }
+            
+            // Create coefficients as HostSlice
+            let coeffs_slice_1 = HostSlice::from_slice(&coeffs_1);
+            let coeffs_slice_2 = HostSlice::from_slice(&coeffs_2);
+            
+            // Test with original implementation
+            let poly_1 = DensePolynomialExt::from_coeffs(coeffs_slice_1, x_size_1, y_size_1);
+            let poly_2 = DensePolynomialExt::from_coeffs(coeffs_slice_2, x_size_2, y_size_2);
+            let orig_result = &poly_1 * &poly_2;
+            
+            // Test with execute_program implementation
+            let poly_1_ep = DensePolynomialExtEP::from_coeffs(coeffs_slice_1, x_size_1, y_size_1);
+            let poly_2_ep = DensePolynomialExtEP::from_coeffs(coeffs_slice_2, x_size_2, y_size_2);
+            let ep_result = &poly_1_ep._mul(&poly_2_ep);
+            
+            // Compare results
+            assert_eq!(orig_result.x_size, ep_result.x_size, 
+                    "X size not match: {} vs {}", 
+                    orig_result.x_size, ep_result.x_size);
+            
+            assert_eq!(orig_result.y_size, ep_result.y_size, 
+                    "Y size not match: {} vs {}", 
+                    orig_result.y_size, ep_result.y_size);
+            
+            // Compare coefficients
+            let result_size = orig_result.x_size * orig_result.y_size;
+            let mut orig_result_coeffs = vec![ScalarField::zero(); result_size];
+            let mut ep_result_coeffs = vec![ScalarField::zero(); result_size];
+            
+            orig_result.copy_coeffs(0, HostSlice::from_mut_slice(&mut orig_result_coeffs));
+            ep_result.copy_coeffs(0, HostSlice::from_mut_slice(&mut ep_result_coeffs));
+            
+            for i in 0..result_size {
+                assert_eq!(orig_result_coeffs[i], ep_result_coeffs[i], 
+                        "Coefficient not matched at index {}: {:?} vs {:?}", 
+                        i, orig_result_coeffs[i], ep_result_coeffs[i]);
+            }
+            
+            println!("Pass test case: ({},{}) * ({},{})", x_size_1, y_size_1, x_size_2, y_size_2);
+        }
+        
+        // Test special cases: constant polynomials
+        let special_test_cases = vec![
+            // (x_size_1, y_size_1, x_size_2, y_size_2)
+            (1, 1, 4, 4),     // Constant * polynomial
+            (4, 4, 1, 1),     // Polynomial * constant
+            (1, 1, 1, 1),     // Constant * constant
+        ];
+        
+        for (x_size_1, y_size_1, x_size_2, y_size_2) in special_test_cases {
+            println!("Special case: ({},{}) * ({},{})", x_size_1, y_size_1, x_size_2, y_size_2);
+            
+            // Generate random coefficients
+            let size_1 = x_size_1 * y_size_1;
+            let mut coeffs_1 = vec![ScalarField::zero(); size_1];
+            for i in 0..size_1 {
+                coeffs_1[i] = ScalarCfg::generate_random(1)[0];
+            }
+            
+            let size_2 = x_size_2 * y_size_2;
+            let mut coeffs_2 = vec![ScalarField::zero(); size_2];
+            for i in 0..size_2 {
+                coeffs_2[i] = ScalarCfg::generate_random(1)[0];
+            }
+            
+            // Create coefficients as HostSlice
+            let coeffs_slice_1 = HostSlice::from_slice(&coeffs_1);
+            let coeffs_slice_2 = HostSlice::from_slice(&coeffs_2);
+            
+            // Test with original implementation
+            let poly_1 = DensePolynomialExt::from_coeffs(coeffs_slice_1, x_size_1, y_size_1);
+            let poly_2 = DensePolynomialExt::from_coeffs(coeffs_slice_2, x_size_2, y_size_2);
+            let orig_result = &poly_1 * &poly_2;
+            
+            // Test with execute_program implementation
+            let poly_1_ep = DensePolynomialExtEP::from_coeffs(coeffs_slice_1, x_size_1, y_size_1);
+            let poly_2_ep = DensePolynomialExtEP::from_coeffs(coeffs_slice_2, x_size_2, y_size_2);
+            let ep_result = &poly_1_ep._mul(&poly_2_ep);
+            
+            // Compare results
+            assert_eq!(orig_result.x_size, ep_result.x_size, 
+                    "X size not match: {} vs {}", 
+                    orig_result.x_size, ep_result.x_size);
+            
+            assert_eq!(orig_result.y_size, ep_result.y_size, 
+                    "Y size not match: {} vs {}", 
+                    orig_result.y_size, ep_result.y_size);
+            
+            // Compare coefficients
+            let result_size = orig_result.x_size * orig_result.y_size;
+            let mut orig_result_coeffs = vec![ScalarField::zero(); result_size];
+            let mut ep_result_coeffs = vec![ScalarField::zero(); result_size];
+            
+            orig_result.copy_coeffs(0, HostSlice::from_mut_slice(&mut orig_result_coeffs));
+            ep_result.copy_coeffs(0, HostSlice::from_mut_slice(&mut ep_result_coeffs));
+            
+            for i in 0..result_size {
+                assert_eq!(orig_result_coeffs[i], ep_result_coeffs[i], 
+                        "Coefficient not matched at index {}: {:?} vs {:?}", 
+                        i, orig_result_coeffs[i], ep_result_coeffs[i]);
+            }
+            
+            println!("Pass special case: ({},{}) * ({},{})", x_size_1, y_size_1, x_size_2, y_size_2);
+        }
+        
+        // Time performance comparison for large polynomials
+        let perf_test_sizes = vec![
+            (32, 32, 32, 32),
+            (64, 64, 64, 64),
+        ];
+        
+        for (x_size_1, y_size_1, x_size_2, y_size_2) in perf_test_sizes {
+            println!("Performance test: ({},{}) * ({},{})", x_size_1, y_size_1, x_size_2, y_size_2);
+            
+            // Generate random coefficients
+            let size_1 = x_size_1 * y_size_1;
+            let mut coeffs_1 = vec![ScalarField::zero(); size_1];
+            for i in 0..size_1 {
+                coeffs_1[i] = ScalarCfg::generate_random(1)[0];
+            }
+            
+            let size_2 = x_size_2 * y_size_2;
+            let mut coeffs_2 = vec![ScalarField::zero(); size_2];
+            for i in 0..size_2 {
+                coeffs_2[i] = ScalarCfg::generate_random(1)[0];
+            }
+            
+            // Create coefficients as HostSlice
+            let coeffs_slice_1 = HostSlice::from_slice(&coeffs_1);
+            let coeffs_slice_2 = HostSlice::from_slice(&coeffs_2);
+            
+            // Create polynomials
+            let poly_1 = DensePolynomialExt::from_coeffs(coeffs_slice_1, x_size_1, y_size_1);
+            let poly_2 = DensePolynomialExt::from_coeffs(coeffs_slice_2, x_size_2, y_size_2);
+            let poly_1_ep = DensePolynomialExtEP::from_coeffs(coeffs_slice_1, x_size_1, y_size_1);
+            let poly_2_ep = DensePolynomialExtEP::from_coeffs(coeffs_slice_2, x_size_2, y_size_2);
+            
+            // Measure time for original implementation
+            let start_time = std::time::Instant::now();
+            let orig_result = &poly_1 * &poly_2;
+            let orig_duration = start_time.elapsed();
+            
+            // Measure time for execute_program implementation
+            let start_time = std::time::Instant::now();
+            let ep_result = &poly_1_ep._mul(&poly_2_ep);
+            let ep_duration = start_time.elapsed();
+            
+            println!("Original implementation: {:?}", orig_duration);
+            println!("Execute_program implementation: {:?}", ep_duration);
+            println!("Speedup: {:.2}x", orig_duration.as_secs_f64() / ep_duration.as_secs_f64());
+            
+            // Verify results match
+            let result_size = orig_result.x_size * orig_result.y_size;
+            let mut orig_result_coeffs = vec![ScalarField::zero(); result_size];
+            let mut ep_result_coeffs = vec![ScalarField::zero(); result_size];
+            
+            orig_result.copy_coeffs(0, HostSlice::from_mut_slice(&mut orig_result_coeffs));
+            ep_result.copy_coeffs(0, HostSlice::from_mut_slice(&mut ep_result_coeffs));
+            
+            for i in 0..result_size {
+                assert_eq!(orig_result_coeffs[i], ep_result_coeffs[i]);
+            }
+            
+            println!("Pass performance test: ({},{}) * ({},{})", x_size_1, y_size_1, x_size_2, y_size_2);
+        }
+        
+        println!("All multiplication tests passed!");
+    }
+}
+
+#[cfg(test)]
+mod tests_vanishing {
+    use super::*;
+    use icicle_bls12_381::curve::{ScalarField, ScalarCfg};
+    use icicle_core::traits::FieldImpl;
+    use icicle_core::traits::GenerateRandom;
+    use icicle_runtime::memory::{HostSlice, DeviceSlice, DeviceVec};
+    use icicle_core::vec_ops::VecOpsConfig;
+    use crate::polynomials::BivariatePolynomial;
+    use crate::polynomials::DensePolynomialExt;
+    use crate::polynomials_ep::BivariatePolynomialEP;
+    use crate::polynomials_ep::DensePolynomialExtEP;
+
+    // 테스트 다항식 생성 함수
+    fn create_test_polynomial(x_size: usize, y_size: usize, sparsity: usize) -> (DensePolynomialExt, DensePolynomialExtEP) {
+        // 랜덤 계수 생성
+        let mut coeffs = vec![ScalarField::zero(); x_size * y_size];
+        
+        // 일부 계수만 랜덤값으로 설정 (sparsity 간격으로)
+        for i in 0..coeffs.len() {
+            if i % sparsity == 0 {
+                coeffs[i] = ScalarCfg::generate_random(1)[0];
+            }
+        }
+        
+        // 최고차항 계수가 0이 아니도록 설정
+        let highest_degree_idx = x_size * y_size - 1;
+        coeffs[highest_degree_idx] = ScalarCfg::generate_random(1)[0];
+        
+        let coeffs_slice = HostSlice::from_slice(&coeffs);
+        
+        // 원본 구현과 EP 구현 다항식 생성
+        let poly_orig = DensePolynomialExt::from_coeffs(coeffs_slice, x_size, y_size);
+        let poly_ep = DensePolynomialExtEP::from_coeffs(coeffs_slice, x_size, y_size);
+        
+        (poly_orig, poly_ep)
+    }
+    
+    // Helper function to convert EP polynomial to original polynomial
+    fn ep_to_orig(poly_ep: &DensePolynomialExtEP) -> DensePolynomialExt {
+        let size = poly_ep.x_size * poly_ep.y_size;
+        let mut coeffs = vec![ScalarField::zero(); size];
+        let coeffs_slice = HostSlice::from_mut_slice(&mut coeffs);
+        poly_ep.copy_coeffs(0, coeffs_slice);
+        DensePolynomialExt::from_coeffs(HostSlice::from_slice(&coeffs), poly_ep.x_size, poly_ep.y_size)
+    }
+
+    // 다항식이 동일한지 확인하는 함수
+    fn assert_polynomials_equal(poly1: &DensePolynomialExt, poly2: &DensePolynomialExtEP, msg: &str) {
+        let poly2_orig = ep_to_orig(poly2);
+        assert_eq!(poly1.x_size, poly2_orig.x_size, "{}: x_size mismatch", msg);
+        assert_eq!(poly1.y_size, poly2_orig.y_size, "{}: y_size mismatch", msg);
+        
+        let size = poly1.x_size * poly1.y_size;
+        let mut coeffs1 = vec![ScalarField::zero(); size];
+        let mut coeffs2 = vec![ScalarField::zero(); size];
+        
+        let coeffs1_slice = HostSlice::from_mut_slice(&mut coeffs1);
+        let coeffs2_slice = HostSlice::from_mut_slice(&mut coeffs2);
+        
+        poly1.copy_coeffs(0, coeffs1_slice);
+        poly2_orig.copy_coeffs(0, coeffs2_slice);
+        
+        for i in 0..size {
+            assert_eq!(coeffs1[i], coeffs2[i], "{}: coefficient at index {} mismatch", msg, i);
+        }
+    }
+    // #[test]
+    // fn test_div_by_vanishing_basic() {
+        
+    //     // 8x8 다항식 (m=2, n=2, denom_x=4, denom_y=4)
+    //     let (poly_orig, poly_ep) = create_test_polynomial(8, 8, 3);
+        
+    //     // 원본 구현 결과 확인
+    //     let (quo_x_orig, quo_y_orig) = poly_orig.div_by_vanishing(4, 4);
+        
+    //     // EP 구현 결과 확인
+    //     let (quo_x_ep, quo_y_ep) = poly_ep.div_by_vanishing(4, 4);
+        
+    //     // 결과 비교
+    //     assert_polynomials_equal(&quo_x_orig, &quo_x_ep, "quotient_x");
+    //     assert_polynomials_equal(&quo_y_orig, &quo_y_ep, "quotient_y");
+        
+    //     // 결과 검증: 원본 = quo_x * (x^4 - 1) + quo_y * (y^4 - 1) - quo_x * quo_y * (x^4 - 1) * (y^4 - 1)
+        
+    //     // 바니싱 다항식 생성 (x^4 - 1)
+    //     let mut x_vanishing_coeffs = vec![ScalarField::zero(); 5];
+    //     x_vanishing_coeffs[0] = ScalarField::one().neg();
+    //     x_vanishing_coeffs[4] = ScalarField::one();
+    //     let x_vanishing = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&x_vanishing_coeffs), 5, 1);
+        
+    //     // 바니싱 다항식 생성 (y^4 - 1)
+    //     let mut y_vanishing_coeffs = vec![ScalarField::zero(); 5];
+    //     y_vanishing_coeffs[0] = ScalarField::one().neg();
+    //     y_vanishing_coeffs[4] = ScalarField::one();
+    //     let y_vanishing = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&y_vanishing_coeffs), 1, 5);
+        
+    //     // 검증: quo_x * (x^4 - 1)
+    //     let term1 = quo_x_orig._mul(&x_vanishing);
+        
+    //     // 검증: quo_y * (y^4 - 1)
+    //     let term2 = quo_y_orig._mul(&y_vanishing);
+        
+    //     // 바니싱 다항식 곱 (x^4 - 1) * (y^4 - 1)
+    //     let xy_vanishing = x_vanishing._mul(&y_vanishing);
+        
+    //     // 검증: quo_x * quo_y * (x^4 - 1) * (y^4 - 1)
+    //     let quo_product = quo_x_orig._mul(&quo_y_orig);
+    //     let term3 = quo_product._mul(&xy_vanishing);
+        
+    //     // 최종 검증: term1 + term2 - term3 == poly_orig
+    //     let result = &(&term1 + &term2) - &term3;
+        
+    //     // 크기가 다를 수 있으므로 먼저 크기를 맞춰줌
+    //     let mut resized_result = result.clone();
+    //     resized_result.resize(poly_orig.x_size, poly_orig.y_size);
+        
+    //     // 최종 비교
+    //     assert_polynomials_equal(&poly_orig, &resized_result, "reconstruction");
+    // }
+    
+     // 더 큰 m 값을 가진 케이스 (m>2, n=2) 테스트
+     #[test]
+     fn test_div_by_vanishing_larger_m() {
+         
+         
+         // 16x8 다항식 (m=4, n=2, denom_x=4, denom_y=4)
+         let (poly_orig, poly_ep) = create_test_polynomial(16, 8, 5);
+         
+         // 원본 구현 결과 확인
+         let (quo_x_orig, quo_y_orig) = poly_orig.div_by_vanishing(4, 4);
+         
+         // EP 구현 결과 확인
+         let (quo_x_ep, quo_y_ep) = poly_ep.div_by_vanishing(4, 4);
+         
+         // 결과 비교
+         assert_polynomials_equal(&quo_x_orig, &quo_x_ep, "quotient_x (larger m)");
+         assert_polynomials_equal(&quo_y_orig, &quo_y_ep, "quotient_y (larger m)");
+     }
+     
+     // 매우 큰 m 값을 가진 케이스 (m>>2, n=2) 테스트
+     #[test]
+     fn test_div_by_vanishing_very_large_m() {
+         
+         
+         // 32x8 다항식 (m=8, n=2, denom_x=4, denom_y=4)
+         let (poly_orig, poly_ep) = create_test_polynomial(32, 8, 7);
+         
+         // 원본 구현 결과 확인
+         let (quo_x_orig, quo_y_orig) = poly_orig.div_by_vanishing(4, 4);
+         
+         // EP 구현 결과 확인
+         let (quo_x_ep, quo_y_ep) = poly_ep.div_by_vanishing(4, 4);
+         
+         // 결과 비교
+         assert_polynomials_equal(&quo_x_orig, &quo_x_ep, "quotient_x (very large m)");
+         assert_polynomials_equal(&quo_y_orig, &quo_y_ep, "quotient_y (very large m)");
+     }
+     
+     // 서로 다른 차수의 테스트 (n은 고정 2)
+     #[test]
+     fn test_div_by_vanishing_different_degrees() {
+         
+         // 8x8 다항식 (denom_x=2, denom_y=4 => m=4, n=2)
+         let (poly_orig, poly_ep) = create_test_polynomial(8, 8, 3);
+         
+         // 원본 구현 결과 확인
+         let (quo_x_orig, quo_y_orig) = poly_orig.div_by_vanishing(2, 4);
+         
+         // EP 구현 결과 확인
+         let (quo_x_ep, quo_y_ep) = poly_ep.div_by_vanishing(2, 4);
+         
+         // 결과 비교
+         assert_polynomials_equal(&quo_x_orig, &quo_x_ep, "quotient_x (different degrees)");
+         assert_polynomials_equal(&quo_y_orig, &quo_y_ep, "quotient_y (different degrees)");
+     }
+     
+     // 최소 크기 케이스 테스트 (m=2, n=2)
+     #[test]
+     fn test_div_by_vanishing_minimum_size() {
+         
+         
+         // 8x8 다항식 (m=2, n=2, denom_x=4, denom_y=4)
+         let (poly_orig, poly_ep) = create_test_polynomial(8, 8, 3);
+         
+         // 원본 구현 결과 확인
+         let (quo_x_orig, quo_y_orig) = poly_orig.div_by_vanishing(4, 4);
+         
+         // EP 구현 결과 확인
+         let (quo_x_ep, quo_y_ep) = poly_ep.div_by_vanishing(4, 4);
+         
+         // 결과 비교
+         assert_polynomials_equal(&quo_x_orig, &quo_x_ep, "quotient_x (minimum size)");
+         assert_polynomials_equal(&quo_y_orig, &quo_y_ep, "quotient_y (minimum size)");
+     }
 }

@@ -3,7 +3,7 @@ use icicle_bls12_381::{curve, vec_ops};
 use icicle_core::traits::{Arithmetic, FieldConfig, FieldImpl, GenerateRandom};
 use icicle_core::vec_ops::{VecOps, VecOpsConfig};
 use crate::tools::{Tau, SetupParams, SubcircuitInfo, MixedSubcircuitQAPEvaled, gen_cached_pows};
-use crate::vectors::{outer_product_two_vecs, point_mul_two_vecs};
+use crate::vector_operations::{outer_product_two_vecs, point_mul_two_vecs};
 use crate::s_max;
 use icicle_core::{ntt, msm};
 use std::path::Path;

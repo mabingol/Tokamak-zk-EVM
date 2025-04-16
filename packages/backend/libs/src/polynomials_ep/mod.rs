@@ -663,18 +663,26 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
 
     
     fn resize(&mut self, target_x_size: usize, target_y_size: usize) {
+        // Check and calculate sizes as power of 2
         let (new_x_size, new_y_size) = _find_size_as_twopower(target_x_size, target_y_size);
+        
+        // If sizes are already as requested, return early
         if self.x_size == new_x_size && self.y_size == new_y_size {
-            return
+            return;
         }
         
-        let new_size: usize = new_x_size * new_y_size;
-        let mut orig_coeffs_vec = Vec::<Self::Field>::with_capacity(self.x_size * self.y_size);
-        unsafe{orig_coeffs_vec.set_len(self.x_size * self.y_size);}
+        // Store current coefficients in host memory
+        let orig_size = self.x_size * self.y_size;
+        let mut orig_coeffs_vec = vec![ScalarField::zero(); orig_size];
         let orig_coeffs = HostSlice::from_mut_slice(&mut orig_coeffs_vec);
         self.copy_coeffs(0, orig_coeffs);
-    
-        let mut res_coeffs_vec = vec![Self::Field::zero(); new_size];
+        
+        // Allocate memory for the resized polynomial
+        let new_size = new_x_size * new_y_size;
+        let mut res_coeffs_vec = vec![ScalarField::zero(); new_size];
+        
+        // Since we can't use FieldSymbol.to_u32(), we'll approach this differently
+        // We'll create a row-by-row copy program instead
         
         let copy_program = FieldProgram::new(
             |vars: &mut Vec<FieldSymbol>| {
@@ -685,25 +693,31 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         
         let vec_ops_cfg = VecOpsConfig::default();
         
-        for i in 0..cmp::min(self.y_size, new_y_size) {
-            let each_x_size = cmp::min(self.x_size, new_x_size);
+        // Copy row by row, similar to the original implementation
+        for i in 0..std::cmp::min(self.y_size, new_y_size) {
+            let each_x_size = std::cmp::min(self.x_size, new_x_size);
             
             let src_start = self.x_size * i;
             let dst_start = new_x_size * i;
             
+            // Create slices for this row
             let src_row = &orig_coeffs_vec[src_start..src_start + each_x_size];
-            let mut dst_row = vec![Self::Field::zero(); each_x_size]; 
+            let mut dst_row = vec![ScalarField::zero(); each_x_size]; 
             
+            // Set up parameters for this row
             let mut parameters = vec![
                 HostSlice::from_slice(src_row),
                 HostSlice::from_mut_slice(&mut dst_row)
             ];
             
+            // Execute copy program for this row
             execute_program(&mut parameters, &copy_program, &vec_ops_cfg).unwrap();
             
+            // Copy the results back to the result vector
             res_coeffs_vec[dst_start..dst_start + each_x_size].copy_from_slice(&dst_row);
         }
-    
+        
+        // Update polynomial with new coefficients and dimensions
         let res_coeffs = HostSlice::from_slice(&res_coeffs_vec);
         self.poly = DensePolynomial::from_coeffs(res_coeffs, new_size);
         self.x_size = new_x_size;
@@ -744,8 +758,11 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
     }
 
     fn _mul(&self, rhs: &Self) -> Self {
+        // 특수 케이스 처리
         let (lhs_x_degree, lhs_y_degree) = self.degree();
         let (rhs_x_degree, rhs_y_degree) = rhs.degree();
+        
+        // 상수 다항식 처리
         if lhs_x_degree + lhs_y_degree == 0 && rhs_x_degree + rhs_y_degree > 0 {
             return &(rhs.clone()) * &(self.get_coeff(0, 0));
         }
@@ -757,30 +774,84 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
             let out_coeffs = HostSlice::from_slice(&out_coeffs_vec);
             return DensePolynomialExtEP::from_coeffs(out_coeffs, 1, 1);
         }
+        
+        // 곱셈 후 예상 차수 계산
         let x_degree = lhs_x_degree + rhs_x_degree;
         let y_degree = lhs_y_degree + rhs_y_degree;
-        // let target_x_size = [self.x_size, rhs.x_size, x_degree as usize + 1].into_iter().max().unwrap();
-        // let target_y_size = [self.y_size, rhs.y_size, y_degree as usize + 1].into_iter().max().unwrap();
         let target_x_size = x_degree as usize + 1;
-        let target_y_size = y_degree as usize +1;
+        let target_y_size = y_degree as usize + 1;
+        
+        // 크기 조정
         let mut lhs_ext = self.clone();
         let mut rhs_ext = rhs.clone();
         lhs_ext.resize(target_x_size, target_y_size);
         rhs_ext.resize(target_x_size, target_y_size);
+        
         let x_size = lhs_ext.x_size;
         let y_size = lhs_ext.y_size;
         let extended_size = x_size * y_size;
-        let cfg_vec_ops = VecOpsConfig::default();
-
-        let mut lhs_evals = DeviceVec::<Self::Field>::device_malloc(extended_size).unwrap();
-        let mut rhs_evals = DeviceVec::<Self::Field>::device_malloc(extended_size).unwrap();
+        
+        // execute_program을 사용한 FFT 기반 곱셈 구현
+        
+        // 1. 계수에서 평가값으로 변환 (FFT)
+        let mut lhs_evals = DeviceVec::<ScalarField>::device_malloc(extended_size).unwrap();
+        let mut rhs_evals = DeviceVec::<ScalarField>::device_malloc(extended_size).unwrap();
+        
+        // FFT 계산 (기존 코드 재사용)
         lhs_ext.to_rou_evals(None, None, &mut lhs_evals);
         rhs_ext.to_rou_evals(None, None, &mut rhs_evals);
-
-        // Element-wise mult. of evaluations
-        let mut out_evals = DeviceVec::<Self::Field>::device_malloc(extended_size).unwrap();
-        ScalarCfg::mul(&lhs_evals, &rhs_evals, &mut out_evals, &cfg_vec_ops).unwrap();
-
+        
+        // 2. 배치 단위로 원소별 곱셈 수행
+        // pointwise 곱셈을 위한 FieldProgram 정의
+        let pointwise_mul_program = FieldProgram::new(
+            |symbols: &mut Vec<FieldSymbol>| {
+                // 원소별 곱셈 수행
+                symbols[2] = symbols[0] * symbols[1];
+            },
+            3 // 입력 A, 입력 B, 출력 C
+        ).unwrap();
+        
+        let vec_ops_cfg = VecOpsConfig::default();
+        
+        // 2-a. HostSlice로 lhs_evals와 rhs_evals 가져오기
+        let mut lhs_evals_host = vec![ScalarField::zero(); extended_size];
+        let mut rhs_evals_host = vec![ScalarField::zero(); extended_size];
+        lhs_evals.copy_to_host(HostSlice::from_mut_slice(&mut lhs_evals_host)).unwrap();
+        rhs_evals.copy_to_host(HostSlice::from_mut_slice(&mut rhs_evals_host)).unwrap();
+        
+        // 2-b. 결과 저장 공간 할당
+        let mut result_evals_host = vec![ScalarField::zero(); extended_size];
+        
+        // 2-c. 배치 크기 정의 (최적의 배치 크기는 하드웨어에 따라 다름)
+        let batch_size = 1024; // 적절한 배치 크기 선택
+        
+        // 2-d. 배치 단위로 pointwise 곱셈 수행
+        for start_idx in (0..extended_size).step_by(batch_size) {
+            let end_idx = std::cmp::min(start_idx + batch_size, extended_size);
+            let current_batch_size = end_idx - start_idx;
+            
+            // 현재 배치의 입력 슬라이스
+            let lhs_batch = &lhs_evals_host[start_idx..end_idx];
+            let rhs_batch = &rhs_evals_host[start_idx..end_idx];
+            
+            // 현재 배치의 출력 슬라이스
+            let result_batch = &mut result_evals_host[start_idx..end_idx];
+            
+            // 배치에 대한 pointwise 곱셈 수행
+            let mut parameters = vec![
+                HostSlice::from_slice(lhs_batch),
+                HostSlice::from_slice(rhs_batch),
+                HostSlice::from_mut_slice(result_batch)
+            ];
+            
+            execute_program(&mut parameters, &pointwise_mul_program, &vec_ops_cfg).unwrap();
+        }
+        
+        // 3. 결과 DeviceVec 생성 및 데이터 복사
+        let mut out_evals = DeviceVec::<ScalarField>::device_malloc(extended_size).unwrap();
+        out_evals.copy_from_host(HostSlice::from_slice(&result_evals_host)).unwrap();
+        
+        // 4. IFFT를 사용하여 결과 계수 계산
         DensePolynomialExtEP::from_rou_evals(&out_evals, x_size, y_size, None, None)
     }
 
@@ -930,189 +1001,207 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         let n = numer_y_size / denom_y_degree as usize;
         let c = denom_x_degree as usize;
         let d = denom_y_degree as usize;
-        if m != 2 || n < 2 {
-            panic!("div_by_vanishing currently does not support this numerator (x_degree is too large). Use divide_x and divide_y, instead.");
-        }
-
+        
         let zeta = Self::FieldConfig::generate_random(1)[0];
         let xi = zeta;
         let vec_ops_cfg: VecOpsConfig = VecOpsConfig::default();
-        if n == 2 { // A faster method for n==2, but not cover n>2.
+        if m>=2 && n== 2 {
+            // A faster method for n==2, but not cover n>2.
             let block = vec![Self::Field::zero(); c * d];
             let mut blocks = vec![block; m * n];
-            self._slice_coeffs_into_blocks(m,n, &mut blocks);
+            self._slice_coeffs_into_blocks(m, n, &mut blocks);
+            
             // Computing A' (accumulation of blocks of the numerator)
             let mut scaled_acc_block_vec = vec![Self::Field::zero(); c * d];
-            let scaled_acc_block = HostSlice::from_mut_slice(&mut scaled_acc_block_vec);
-
             let xi_d = xi.pow(d);
             let mut acc_xi_d = Self::Field::one();
+            
             for i in 0..n {
                 let mut sub_acc_block_vec = vec![Self::Field::zero(); c * d];
                 let sub_acc_block = unsafe{DeviceSlice::from_mut_slice(&mut sub_acc_block_vec)};
+                
+                // Accumulate blocks for current i
                 for j in 0..m {
                     Self::FieldConfig::accumulate(
                         sub_acc_block, 
-                        HostSlice::from_slice(&blocks[j + i*m]), 
+                        HostSlice::from_slice(&blocks[j*m + i]), 
                         &vec_ops_cfg
                     ).unwrap();
                 }
-                let mut sub_scaled_acc_block = DeviceVec::<Self::Field>::device_malloc(c * d).unwrap();
-                let acc_xi_d_vec = vec![acc_xi_d; c * d];
-                Self::FieldConfig::mul(
-                    sub_acc_block,
-                    HostSlice::<Self::Field>::from_slice(&acc_xi_d_vec),
-                    &mut sub_scaled_acc_block,
-                    &vec_ops_cfg
+                
+                // Convert DeviceSlice to HostSlice
+                let mut host_sub_acc_block_vec = vec![Self::Field::zero(); c * d];
+                sub_acc_block.copy_to_host(&mut HostSlice::from_mut_slice(&mut host_sub_acc_block_vec)).unwrap();
+                
+                // Prepare result for scalar multiplication
+                let mut scaled_result_vec = vec![Self::Field::zero(); c * d];
+                
+                // Define scalar_mul program
+                let scalar_mul_program = FieldProgram::new(
+                    |vars: &mut Vec<FieldSymbol>| {
+                        // Multiply each element by the scalar
+                        vars.push(vars[0] * acc_xi_d);
+                    },
+                    1 // 입력 값만 파라미터로 받음
                 ).unwrap();
-                Self::FieldConfig::accumulate(
-                    scaled_acc_block, 
-                    &sub_scaled_acc_block, 
-                    &vec_ops_cfg
-                ).unwrap();
-
+                
+                // Setup parameters for execute_program
+                let mut parameters = vec![
+                    HostSlice::from_slice(&host_sub_acc_block_vec),
+                    HostSlice::from_mut_slice(&mut scaled_result_vec)
+                ];
+                
+                // Execute the scalar multiplication program
+                execute_program(&mut parameters, &scalar_mul_program, &vec_ops_cfg).unwrap();
+                
+                // Accumulate results to scaled_acc_block_vec
+                for idx in 0..c*d {
+                    scaled_acc_block_vec[idx] = scaled_acc_block_vec[idx] + scaled_result_vec[idx];
+                }
+    
                 acc_xi_d = acc_xi_d * xi_d;
             }
-            let acc_block_poly = DensePolynomialExtEP::from_coeffs(scaled_acc_block, c, d);
-            // Computing R_tilde (eval of A' on rou-X and coset-Y)
+            
+            // let acc_block_poly = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&scaled_acc_block_vec), c, d);
+            
+            let scaled_acc_block = HostSlice::from_slice(&scaled_acc_block_vec);
+            let acc_block_poly = DensePolynomialExt::from_coeffs(scaled_acc_block, c, d);
             let mut acc_block_eval = DeviceVec::<Self::Field>::device_malloc(c * d).unwrap();
             acc_block_poly.to_rou_evals(None, Some(&xi), &mut acc_block_eval);
-            // Computing Q_Z_tilde (eval of quo_y on rou-X and coset-Y)
-            let _denom_vec = vec![xi_d - Self::Field::one(); c * d];
-            let _denom = HostSlice::from_slice(&_denom_vec);
-            let mut quo_y_eval = DeviceVec::<Self::Field>::device_malloc(c * d).unwrap();
-            Self::FieldConfig::div(&acc_block_eval, _denom, &mut quo_y_eval, &vec_ops_cfg).unwrap();
-            // Computing Q_Z (quo_y polynomial)
-            let quo_y = DensePolynomialExtEP::from_rou_evals(&quo_y_eval, c, d, None, Some(&xi));
-            // Computing R = quo_y * (y^d - 1)
-            let mut rem_x = &quo_y.mul_monomial(0, d) - &quo_y;
-            rem_x.resize(m*c, n*d);
-            // Computing B = quo_x * (x^c - 1)
-            let lhs = self - &rem_x;
-            // Computing B' (accumulation of blocks of B)
-            let block = vec![Self::Field::zero(); c * (n*d)];
-            let mut blocks = vec![block; m];
-            lhs._slice_coeffs_into_blocks(m,1, &mut blocks);
-
-            let mut scaled_acc_block_vec = vec![Self::Field::zero(); c * (n*d)];
-            let scaled_acc_block = HostSlice::from_mut_slice(&mut scaled_acc_block_vec);
-
-            let zeta_c = zeta.pow(c);
-            let mut acc_zeta_c = Self::Field::one();
-            for i in 0..m {
-                let acc_zeta_c_vec = vec![acc_zeta_c; c * (n*d)];
-                let mut scaled_block = DeviceVec::<Self::Field>::device_malloc(c * (n*d)).unwrap();
-                Self::FieldConfig::mul(
-                    HostSlice::from_slice(&blocks[i]),
-                    HostSlice::<Self::Field>::from_slice(&acc_zeta_c_vec),
-                    &mut scaled_block,
-                    &vec_ops_cfg
-                ).unwrap(); 
-                Self::FieldConfig::accumulate(
-                    scaled_acc_block, 
-                    &scaled_block, 
-                    &vec_ops_cfg
-                ).unwrap();
-
-                acc_zeta_c = acc_zeta_c * zeta_c;
-            }
-            let acc_block_poly = DensePolynomialExtEP::from_coeffs(scaled_acc_block, c, n*d);
-            //Computing B_tilde (eval of B' on coset-X and rou-Y)
-            let mut acc_block_eval = DeviceVec::device_malloc(c * (n*d)).unwrap();
-            acc_block_poly.to_rou_evals(Some(&zeta), None, &mut acc_block_eval);
-            // Computing Q_Y_tilde (eval of quo_x on coset-X and rou-Y)
-            let _denom_vec = vec![zeta_c - Self::Field::one(); c * (n*d)];
-            let _denom = HostSlice::from_slice(&_denom_vec);
-            let mut quo_x_eval = DeviceVec::<Self::Field>::device_malloc(c * (n*d)).unwrap();
-            Self::FieldConfig::div(&acc_block_eval, _denom, &mut quo_x_eval, &vec_ops_cfg).unwrap();
-            // Computing Q_Y (quo_x)
-            let quo_x = DensePolynomialExtEP::from_rou_evals(&quo_x_eval, c, n*d, Some(&zeta), None);
-            (quo_x, quo_y)
             
-        } else { // More general method for n>=2, which also covers n=2 but maybe slower.
-            let block = vec![Self::Field::zero(); c * (n*d)];
-            let mut blocks = vec![block; m];
-            self._slice_coeffs_into_blocks(m,1, &mut blocks);
-            // Computing A' (accumulation of blocks of the numerator)
-            let mut acc_block_vec = vec![Self::Field::zero(); c * (n*d)];
-            let acc_block = HostSlice::from_mut_slice(&mut acc_block_vec);
-            for i in 0..m {
-                Self::FieldConfig::accumulate(
-                    acc_block, 
-                    HostSlice::from_slice(&blocks[i]), 
-                    &vec_ops_cfg
-                ).unwrap();
-            }
-            let acc_block_poly = DensePolynomialExtEP::from_coeffs(acc_block, c,n*d);
-            // Computing R_tilde (eval of A' on rou-X and coset-nY)
-            let mut acc_block_eval = DeviceVec::<Self::Field>::device_malloc(c * (n*d)).unwrap();
-            acc_block_poly.to_rou_evals(None, Some(&xi), &mut acc_block_eval);
-            // Computing Q_Z_tilde (eval of quo_y on rou-X and coset-nY)
-            let mut denom_coeffs_vec = vec![Self::Field::zero(); 1 * (n*d)];
-            denom_coeffs_vec[0] = Self::Field::zero() - Self::Field::one();
-            denom_coeffs_vec[d] = Self::Field::one();
-            let denom_coeffs = unsafe{DeviceSlice::from_slice(&denom_coeffs_vec)};
-            //let denom_coeffs = HostSlice::from_slice(&denom_coeffs_vec);
-            let denom_poly = DensePolynomialExtEP::from_coeffs(denom_coeffs, 1, n*d);
-            let mut denom_evals_vec = vec![Self::Field::zero(); n*d];
-            //let denom_evals = unsafe{DeviceSlice::from_mut_slice(&mut denom_evals_vec)};
-            let denom_evals = HostSlice::from_mut_slice(&mut denom_evals_vec);
-            denom_poly.to_rou_evals(None, Some(&xi), denom_evals);
-            let mut denom_evals_ext_vec = vec![Self::Field::zero(); c * (n*d)];
-            for ind in 0..(n*d) {
-                denom_evals_ext_vec[ind*c .. (ind + 1)*c].copy_from_slice(&vec![denom_evals_vec[ind]; c]);
-            }
-            let denom_evals_ext = unsafe{DeviceSlice::from_slice(&denom_evals_ext_vec)};
-            let mut quo_y_eval = DeviceVec::<Self::Field>::device_malloc(c * (n*d)).unwrap();
-            Self::FieldConfig::div(&acc_block_eval, denom_evals_ext, &mut quo_y_eval, &vec_ops_cfg).unwrap();
+            // Convert to HostSlice
+            let mut host_acc_block_eval_vec = vec![Self::Field::zero(); c * d];
+            acc_block_eval.copy_to_host(&mut HostSlice::from_mut_slice(&mut host_acc_block_eval_vec)).unwrap();
+            
+            // Computing Q_Z_tilde (eval of quo_y on rou-X and coset-Y)
+            let _denom_val = (xi_d - Self::Field::one()).inv();
+            let _denom_vec = vec![_denom_val; c * d];
+            let mut quo_y_eval_vec = vec![Self::Field::zero(); c * d];
+            
+            // Define multiplication by inverse program
+            let mul_program = FieldProgram::new(
+                |vars: &mut Vec<FieldSymbol>| {
+                    // Multiply by inverse of denominator
+                    vars.push(vars[0] * _denom_val);
+                },
+                1 // 입력 값만 파라미터로 받음
+            ).unwrap();
+            
+            // Setup parameters
+            let mut parameters = vec![
+                HostSlice::from_slice(&host_acc_block_eval_vec),
+                HostSlice::from_mut_slice(&mut quo_y_eval_vec)
+            ];
+            
+            // Execute the multiplication program
+            execute_program(&mut parameters, &mul_program, &vec_ops_cfg).unwrap();
+            
+            // Convert back to DeviceVec
+            let mut quo_y_eval_device = DeviceVec::<Self::Field>::device_malloc(c * d).unwrap();
+            quo_y_eval_device.copy_from_host(&HostSlice::from_slice(&quo_y_eval_vec)).unwrap();
+            
             // Computing Q_Z (quo_y polynomial)
-            let quo_y = DensePolynomialExtEP::from_rou_evals(&quo_y_eval, c, n*d, None, Some(&xi));
+            let quo_y = DensePolynomialExtEP::from_rou_evals(&quo_y_eval_device, c, d, None, Some(&xi));
+            
             // Computing R = quo_y * (y^d - 1)
             let mut rem_x = &quo_y.mul_monomial(0, d) - &quo_y;
             rem_x.resize(m*c, n*d);
+            
             // Computing B = quo_x * (x^c - 1)
             let lhs = self - &rem_x;
+            
             // Computing B' (accumulation of blocks of B)
             let block = vec![Self::Field::zero(); c * (n*d)];
             let mut blocks = vec![block; m];
-            lhs._slice_coeffs_into_blocks(m,1, &mut blocks);
-
+            lhs._slice_coeffs_into_blocks(m, 1, &mut blocks);
+    
             let mut scaled_acc_block_vec = vec![Self::Field::zero(); c * (n*d)];
-            let scaled_acc_block = HostSlice::from_mut_slice(&mut scaled_acc_block_vec);
 
             let zeta_c = zeta.pow(c);
             let mut acc_zeta_c = Self::Field::one();
+            
             for i in 0..m {
-                let acc_zeta_c_vec = vec![acc_zeta_c; c * (n*d)];
-                let mut scaled_block = DeviceVec::<Self::Field>::device_malloc(c * (n*d)).unwrap();
-                Self::FieldConfig::mul(
-                    HostSlice::from_slice(&blocks[i]),
-                    HostSlice::<Self::Field>::from_slice(&acc_zeta_c_vec),
-                    &mut scaled_block,
-                    &vec_ops_cfg
-                ).unwrap(); 
-                Self::FieldConfig::accumulate(
-                    scaled_acc_block, 
-                    &scaled_block, 
-                    &vec_ops_cfg
+                // Scalar multiplication with acc_zeta_c
+                let mut scaled_result_vec = vec![Self::Field::zero(); c * (n*d)];
+                
+                // Define scalar multiplication program with current acc_zeta_c
+                let scalar_mul_program = FieldProgram::new(
+                    |vars: &mut Vec<FieldSymbol>| {
+                        // Multiply by current acc_zeta_c
+                        vars.push(vars[0] * acc_zeta_c);
+                    },
+                    1 // 입력 값만 파라미터로 받음
                 ).unwrap();
+                
+                // Setup parameters
+                let mut parameters = vec![
+                    HostSlice::from_slice(&blocks[i]),
+                    HostSlice::from_mut_slice(&mut scaled_result_vec)
+                ];
+                
+                // Execute scalar multiplication
+                execute_program(&mut parameters, &scalar_mul_program, &vec_ops_cfg).unwrap();
+                
+                // Accumulate results
+                for idx in 0..c*(n*d) {
+                    scaled_acc_block_vec[idx] = scaled_acc_block_vec[idx] + scaled_result_vec[idx];
+                }
 
                 acc_zeta_c = acc_zeta_c * zeta_c;
             }
-            let acc_block_poly = DensePolynomialExtEP::from_coeffs(scaled_acc_block, c, n*d);
-            //Computing B_tilde (eval of B' on coset-X and rou-Y)
+            
+            let scaled_acc_block = HostSlice::from_slice(&scaled_acc_block_vec);
+            let acc_block_poly = DensePolynomialExt::from_coeffs(scaled_acc_block, c, n*d);
+            
+            // Computing B_tilde (eval of B' on coset-X and rou-Y)
             let mut acc_block_eval = DeviceVec::device_malloc(c * (n*d)).unwrap();
             acc_block_poly.to_rou_evals(Some(&zeta), None, &mut acc_block_eval);
-            // Computing Q_Y_tilde (eval of quo_x on coset-X and rou-Y)
-            let _denom_vec = vec![zeta_c - Self::Field::one(); c * (n*d)];
-            let _denom = HostSlice::from_slice(&_denom_vec);
-            let mut quo_x_eval = DeviceVec::<Self::Field>::device_malloc(c * (n*d)).unwrap();
-            Self::FieldConfig::div(&acc_block_eval, _denom, &mut quo_x_eval, &vec_ops_cfg).unwrap();
+            
+            // Convert to HostSlice
+            let mut host_acc_block_eval_vec = vec![Self::Field::zero(); c * (n*d)];
+            acc_block_eval.copy_to_host(&mut HostSlice::from_mut_slice(&mut host_acc_block_eval_vec)).unwrap();
+            
+            // Prepare division (multiplication by inverse)
+            let _denom_val = (zeta_c - Self::Field::one()).inv();
+            let mut quo_x_eval_vec = vec![Self::Field::zero(); c * (n*d)];
+            
+            // Define multiplication by inverse program
+            let mul_inv_program = FieldProgram::new(
+                |vars: &mut Vec<FieldSymbol>| {
+                    // Multiply by inverse of denominator
+                    vars.push(vars[0] * _denom_val);
+                },
+                1 // 입력 값만 파라미터로 받음
+            ).unwrap();
+            
+            // Setup parameters
+            let mut parameters = vec![
+                HostSlice::from_slice(&host_acc_block_eval_vec),
+                HostSlice::from_mut_slice(&mut quo_x_eval_vec)
+            ];
+            
+            // Execute division program
+            execute_program(&mut parameters, &mul_inv_program, &vec_ops_cfg).unwrap();
+            
+            // Convert to DeviceVec
+            let mut quo_x_eval_device = DeviceVec::<Self::Field>::device_malloc(c * (n*d)).unwrap();
+            quo_x_eval_device.copy_from_host(&HostSlice::from_slice(&quo_x_eval_vec)).unwrap();
+            
             // Computing Q_Y (quo_x)
-            let quo_x = DensePolynomialExtEP::from_rou_evals(&quo_x_eval, c, n*d, Some(&zeta), None);
-            (quo_x, quo_y)
-        }
+            let quo_x_ext = DensePolynomialExt::from_rou_evals(&quo_x_eval_device, c, n*d, Some(&zeta), None);
+            let quo_x = DensePolynomialExtEP {
+                poly: quo_x_ext.poly,
+                x_degree: (c - 1) as i64,
+                y_degree: (n*d - 1) as i64,
+                x_size: c,
+                y_size: n*d,
+            };
 
+            // Return the quotients
+            (quo_x, quo_y)
+        } else {
+            panic!("div_by_vanishing currently does not support this numerator (x_degree is too large). Use divide_x and divide_y, instead.");
+        }
     }
 
     fn div_by_ruffini(&self, x: Self::Field, y: Self:: Field) -> (Self, Self, Self::Field) where Self: Sized {
