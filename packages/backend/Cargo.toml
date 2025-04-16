@@ -2,6 +2,7 @@
 members = [
     "libs",
     "setup/trusted-setup",
+    "prove"
 ]
 
 [workspace.package]
