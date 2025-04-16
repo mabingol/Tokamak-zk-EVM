@@ -656,12 +656,248 @@ fn create_test_coefficients(x_size: usize, y_size: usize, num_nonzero: usize) ->
   coeffs
 }
 
+fn create_test_polynomial2(x_size: usize, y_size: usize, num_nonzero: usize) -> (DensePolynomial, DensePolynomialExt, DensePolynomialExtEP) {
+  let mut coeffs = vec![ScalarField::zero(); x_size * y_size];
+  
+  // 영이 아닌 계수 추가
+  for i in 0..num_nonzero {
+      let x = (i * 3) % x_size;
+      let y = (i * 7) % y_size;
+      coeffs[x + y * x_size] = ScalarField::one();
+  }
+  
+  let dense_poly = DensePolynomial::from_coeffs(HostSlice::from_slice(&coeffs), x_size * y_size);
+  let biv_poly = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&coeffs), x_size, y_size);
+  let biv_poly_ep = DensePolynomialExtEP::from_coeffs(HostSlice::from_slice(&coeffs), x_size, y_size);
+  
+  (dense_poly, biv_poly, biv_poly_ep)
+}
+fn bench_to_rou_evals(c: &mut Criterion) {
+  // 코셋 값 설정
+  let coset_x_val = ScalarField::from_u32(7u32);
+  let coset_y_val = ScalarField::from_u32(11u32);
+  
+  // 작은 크기 벤치마크
+  let small_x = 8;
+  let small_y = 8;
+  let (_, small_poly, small_poly_ep) = create_test_polynomial2(small_x, small_y, 5);
+  
+  let mut group = c.benchmark_group("to_rou_evals_small");
+  
+  // 코셋 없음
+  group.bench_function("original_no_coset", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
+          |mut evals| {
+              small_poly.to_rou_evals(None, None, &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.bench_function("execute_program_no_coset", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
+          |mut evals| {
+              small_poly_ep.to_rou_evals(None, None, &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  // X 코셋만
+  group.bench_function("original_x_coset", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
+          |mut evals| {
+              small_poly.to_rou_evals(Some(&coset_x_val), None, &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.bench_function("execute_program_x_coset", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
+          |mut evals| {
+              small_poly_ep.to_rou_evals(Some(&coset_x_val), None, &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  // Y 코셋만
+  group.bench_function("original_y_coset", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
+          |mut evals| {
+              small_poly.to_rou_evals(None, Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.bench_function("execute_program_y_coset", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
+          |mut evals| {
+              small_poly_ep.to_rou_evals(None, Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  // 두 코셋 모두
+  group.bench_function("original_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
+          |mut evals| {
+              small_poly.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.bench_function("execute_program_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
+          |mut evals| {
+              small_poly_ep.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.finish();
+  
+  // 중간 크기 벤치마크
+  let medium_x = 16;
+  let medium_y = 16;
+  let (_, medium_poly, medium_poly_ep) = create_test_polynomial2(medium_x, medium_y, 10);
+  
+  let mut group = c.benchmark_group("to_rou_evals_medium");
+  
+  // 두 코셋 모두
+  group.bench_function("original_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(medium_x * medium_y).unwrap(),
+          |mut evals| {
+              medium_poly.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.bench_function("execute_program_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(medium_x * medium_y).unwrap(),
+          |mut evals| {
+              medium_poly_ep.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.finish();
+  
+  // 큰 크기 벤치마크
+  let large_x = 32;
+  let large_y = 32;
+  let (_, large_poly, large_poly_ep) = create_test_polynomial2(large_x, large_y, 20);
+  
+  let mut group = c.benchmark_group("to_rou_evals_large");
+  
+  // 두 코셋 모두
+  group.bench_function("original_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(large_x * large_y).unwrap(),
+          |mut evals| {
+              large_poly.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.bench_function("execute_program_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(large_x * large_y).unwrap(),
+          |mut evals| {
+              large_poly_ep.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.finish();
+  
+  // 불균형 크기 벤치마크
+  let unbalanced_x = 8;
+  let unbalanced_y = 32;
+  let (_, unbalanced_poly, unbalanced_poly_ep) = create_test_polynomial2(unbalanced_x, unbalanced_y, 15);
+  
+  let mut group = c.benchmark_group("to_rou_evals_unbalanced");
+  
+  // 두 코셋 모두
+  group.bench_function("original_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(unbalanced_x * unbalanced_y).unwrap(),
+          |mut evals| {
+              unbalanced_poly.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.bench_function("execute_program_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(unbalanced_x * unbalanced_y).unwrap(),
+          |mut evals| {
+              unbalanced_poly_ep.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.finish();
+  
+  // 더 큰 크기 벤치마크
+  let very_large_x = 64;
+  let very_large_y = 64;
+  let (_, very_large_poly, very_large_poly_ep) = create_test_polynomial2(very_large_x, very_large_y, 30);
+  
+  let mut group = c.benchmark_group("to_rou_evals_very_large");
+  
+  // 두 코셋 모두
+  group.bench_function("original_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(very_large_x * very_large_y).unwrap(),
+          |mut evals| {
+              very_large_poly.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.bench_function("execute_program_both_cosets", |b| {
+      b.iter_batched(
+          || DeviceVec::<ScalarField>::device_malloc(very_large_x * very_large_y).unwrap(),
+          |mut evals| {
+              very_large_poly_ep.to_rou_evals(Some(&coset_x_val), Some(&coset_y_val), &mut evals);
+          },
+          BatchSize::SmallInput,
+      )
+  });
+  
+  group.finish();
+}
+
 criterion_group!(
   benches, 
   // bench_find_degree, 
   // bench_from_rou_evals,
   // bench_resize,
   // bench_polynomial_mul,
-  bench_div_by_vanishing,
+  // bench_div_by_vanishing,
+  bench_to_rou_evals,
 );
 criterion_main!(benches);

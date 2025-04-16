@@ -370,37 +370,24 @@ impl BivariatePolynomial for DensePolynomialExt {
         
         // IFFT along X
         cfg.batch_size = y_size as i32;
-        cfg.columns_batch = false;
+        cfg.columns_batch = true;
         ntt::ntt(evals, ntt::NTTDir::kInverse, &cfg, &mut coeffs).unwrap();
         // IFFT along Y
         cfg.batch_size = x_size as i32;
-        cfg.columns_batch = true;
+        cfg.columns_batch = false;
         ntt::ntt_inplace(&mut coeffs, ntt::NTTDir::kInverse, &cfg).unwrap();
+
+        ntt::release_domain::<Self::Field>().unwrap();
 
         let mut scaled_coeffs = coeffs;
         let vec_ops_cfg = VecOpsConfig::default();
 
         if let Some(_factor) = coset_x {
             let factor = _factor.inv();
-            let mut _right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            let mut scaler = Self::Field::one();
-            for ind in 0..x_size {
-                _right_scale[ind * y_size .. (ind+1) * y_size].copy_from_host(HostSlice::from_slice(&vec![scaler; y_size])).unwrap();
-                scaler = scaler.mul(factor);
-            }
-            let mut right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            Self::FieldConfig::transpose(&_right_scale, x_size as u32, y_size as u32, &mut right_scale, &vec_ops_cfg).unwrap();
-            let mut temp = DeviceVec::<Self::Field>::device_malloc( size ).unwrap();
-            Self::FieldConfig::mul(&scaled_coeffs, &right_scale, &mut temp, &vec_ops_cfg).unwrap();
-            scaled_coeffs = temp;
-        }
-
-        if let Some(_factor) = coset_y {
-            let factor = _factor.inv();
             let mut left_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
             let mut scaler = Self::Field::one();
-            for ind in 0..y_size {
-                left_scale[ind * x_size .. (ind+1) * x_size].copy_from_host(HostSlice::from_slice(&vec![scaler; x_size])).unwrap();
+            for ind in 0..x_size {
+                left_scale[ind * y_size .. (ind+1) * y_size].copy_from_host(HostSlice::from_slice(&vec![scaler; y_size])).unwrap();
                 scaler = scaler.mul(factor);
             }
             let mut temp = DeviceVec::<Self::Field>::device_malloc(size ).unwrap();
@@ -408,6 +395,20 @@ impl BivariatePolynomial for DensePolynomialExt {
             scaled_coeffs = temp;
         }
 
+        if let Some(_factor) = coset_y {
+            let factor = _factor.inv();
+            let mut _right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+            let mut scaler = Self::Field::one();
+            for ind in 0..y_size {
+                _right_scale[ind * x_size .. (ind+1) * x_size].copy_from_host(HostSlice::from_slice(&vec![scaler; x_size])).unwrap();
+                scaler = scaler.mul(factor);
+            }
+            let mut right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+            Self::FieldConfig::transpose(&_right_scale, y_size as u32, x_size as u32, &mut right_scale, &vec_ops_cfg).unwrap();
+            let mut temp = DeviceVec::<Self::Field>::device_malloc( size ).unwrap();
+            Self::FieldConfig::mul(&scaled_coeffs, &right_scale, &mut temp, &vec_ops_cfg).unwrap();
+            scaled_coeffs = temp;
+        }
         DensePolynomialExt::from_coeffs(&scaled_coeffs, x_size, y_size)
     }
 
@@ -416,6 +417,38 @@ impl BivariatePolynomial for DensePolynomialExt {
         if evals.len() < size {
             panic!("Insufficient buffer length for to_rou_evals")
         }
+        let mut coeffs = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+        self.copy_coeffs(0, &mut coeffs);
+
+        let mut scaled_coeffs = coeffs;
+        let vec_ops_cfg = VecOpsConfig::default();
+
+        if let Some(factor) = coset_x {
+            let mut left_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+            let mut scaler = Self::Field::one();
+            for ind in 0..self.x_size {
+                left_scale[ind * self.y_size .. (ind+1) * self.y_size].copy_from_host(HostSlice::from_slice(&vec![scaler; self.y_size])).unwrap();
+                scaler = scaler.mul(*factor);
+            }
+            let mut temp = DeviceVec::<Self::Field>::device_malloc(size ).unwrap();
+            Self::FieldConfig::mul(&scaled_coeffs, &mut left_scale, &mut temp, &vec_ops_cfg).unwrap();
+            scaled_coeffs = temp;
+        }
+
+        if let Some(factor) = coset_y {
+            let mut _right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+            let mut scaler = Self::Field::one();
+            for ind in 0..self.y_size {
+                _right_scale[ind * self.x_size .. (ind+1) * self.x_size].copy_from_host(HostSlice::from_slice(&vec![scaler; self.x_size])).unwrap();
+                scaler = scaler.mul(*factor);
+            }
+            let mut right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+            Self::FieldConfig::transpose(&_right_scale, self.y_size as u32, self.x_size as u32, &mut right_scale, &vec_ops_cfg).unwrap();
+            let mut temp = DeviceVec::<Self::Field>::device_malloc( size ).unwrap();
+            Self::FieldConfig::mul(&scaled_coeffs, &mut right_scale, &mut temp, &vec_ops_cfg).unwrap();
+            scaled_coeffs = temp;
+        }
+
         ntt::initialize_domain::<Self::Field>(
             ntt::get_root_of_unity::<Self::Field>(
                 size.try_into()
@@ -424,48 +457,18 @@ impl BivariatePolynomial for DensePolynomialExt {
             &ntt::NTTInitDomainConfig::default(),
         )
         .unwrap();
-        
-        let mut coeffs = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-        self.copy_coeffs(0, &mut coeffs);
-
-        let mut scaled_coeffs = coeffs;
-        let vec_ops_cfg = VecOpsConfig::default();
-
-        if let Some(factor) = coset_x {
-            let mut _right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            let mut scaler = Self::Field::one();
-            for ind in 0..self.x_size {
-                _right_scale[ind * self.y_size .. (ind+1) * self.y_size].copy_from_host(HostSlice::from_slice(&vec![scaler; self.y_size])).unwrap();
-                scaler = scaler.mul(*factor);
-            }
-            let mut right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            Self::FieldConfig::transpose(&_right_scale, self.x_size as u32, self.y_size as u32, &mut right_scale, &vec_ops_cfg).unwrap();
-            let mut temp = DeviceVec::<Self::Field>::device_malloc( size ).unwrap();
-            Self::FieldConfig::mul(&scaled_coeffs, &mut right_scale, &mut temp, &vec_ops_cfg).unwrap();
-            scaled_coeffs = temp;
-        }
-
-        if let Some(factor) = coset_y {
-            let mut left_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            let mut scaler = Self::Field::one();
-            for ind in 0..self.y_size {
-                left_scale[ind * self.x_size .. (ind+1) * self.x_size].copy_from_host(HostSlice::from_slice(&vec![scaler; self.x_size])).unwrap();
-                scaler = scaler.mul(*factor);
-            }
-            let mut temp = DeviceVec::<Self::Field>::device_malloc(size ).unwrap();
-            Self::FieldConfig::mul(&scaled_coeffs, &mut left_scale, &mut temp, &vec_ops_cfg).unwrap();
-            scaled_coeffs = temp;
-        }
-
         let mut cfg = ntt::NTTConfig::<Self::Field>::default();
         // FFT along X
         cfg.batch_size = self.y_size as i32;
-        cfg.columns_batch = false;
+        cfg.columns_batch = true;
         ntt::ntt(&scaled_coeffs, ntt::NTTDir::kForward, &cfg, evals).unwrap();
+        
         // FFT along Y
         cfg.batch_size = self.x_size as i32;
-        cfg.columns_batch = true;
+        cfg.columns_batch = false;
         ntt::ntt_inplace(evals, ntt::NTTDir::kForward, &cfg).unwrap();
+
+        ntt::release_domain::<Self::Field>().unwrap();
     }
 
     fn copy_coeffs<S: HostOrDeviceSlice<Self::Field> + ?Sized>(&self, start_idx: u64, coeffs: &mut S) {
