@@ -1,4 +1,5 @@
 pub mod polynomials;
+pub mod polynomials_ep;
 pub mod vectors;
 pub mod iotools;
 pub mod group_structures;

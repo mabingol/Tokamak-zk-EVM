@@ -19,10 +19,14 @@ ark-bls12-381 = "0.5.0"
 ark-ec = "0.5.0"
 ark-ff = "0.5.0"
 
-[[bench]] 
-name = "outer_product_bench"
-harness = false
+#[[bench]] 
+#name = "outer_product_bench"
+#harness = false
 
 #[[bench]]
 #name = "bench_polynomial_division"
 #harness = false
+
+[[bench]]
+name = "bench_polynomials"
+harness = false

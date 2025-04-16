@@ -448,7 +448,6 @@ mod tests {
     // More tests can be added as needed
     #[test]
     fn test_outer_product_comparison() {
-        use icicle_runtime::test_utilities;
         
         // Set test sizes
         const TEST_SIZE_COL: usize = 32;
@@ -506,6 +505,112 @@ mod tests {
         }
         
         println!("All tests passed: Both functions produce identical results.");
+    }
+}
+
+#[cfg(test)]
+mod test_ep {
+    use icicle_bls12_381::{curve::ScalarField, polynomials::DensePolynomial};
+    use icicle_core::traits::FieldImpl;
+    use icicle_runtime::memory::HostSlice;
+    use crate::polynomials::{BivariatePolynomial, DensePolynomialExt};
+    use crate::polynomials_ep::{BivariatePolynomialEP, DensePolynomialExtEP};
+    use icicle_core::polynomials::UnivariatePolynomial;
+
+    #[test]
+    fn test_polynomial_find_degree() {
+
+        // Create test polynomial with known degrees
+        // Sample sizes to test
+        const X_SIZE: usize = 8;
+        const Y_SIZE: usize = 12;
+        
+        // Create a test polynomial with non-zero coefficients at specific positions
+        let mut coeffs1 = vec![ScalarField::zero(); X_SIZE * Y_SIZE];
+    
+        // Set specific coefficients to establish a known degree pattern
+        // Assuming a specific layout of coefficients in the array
+        coeffs1[2 + 3 * X_SIZE] = ScalarField::one(); // x^2 * y^3
+        coeffs1[5 + 1 * X_SIZE] = ScalarField::one(); // x^5 * y^1
+        coeffs1[0 + 7 * X_SIZE] = ScalarField::one(); // x^0 * y^7
+    
+        let poly = DensePolynomial::from_coeffs(HostSlice::from_slice(&coeffs1), X_SIZE * Y_SIZE);
+        
+        // Test case 1: x_size <= y_size
+        let (x_degree1, y_degree1) = DensePolynomialExt::find_degree(&poly, X_SIZE, Y_SIZE);
+        let (x_degree2, y_degree2) = DensePolynomialExtEP::find_degree(&poly, X_SIZE, Y_SIZE);
+        
+        assert_eq!(
+            x_degree1, x_degree2,
+            "X degrees don't match for case where x_size <= y_size: {} vs {}", 
+            x_degree1, x_degree2
+        );
+        
+        assert_eq!(
+            y_degree1, y_degree2,
+            "Y degrees don't match for case where x_size <= y_size: {} vs {}", 
+            y_degree1, y_degree2
+        );
+        
+        // Test case 2: x_size > y_size
+        let (x_degree1, y_degree1) = DensePolynomialExt::find_degree(&poly, Y_SIZE, X_SIZE);
+        let (x_degree2, y_degree2) = DensePolynomialExtEP::find_degree(&poly, Y_SIZE, X_SIZE);
+        
+        assert_eq!(
+            x_degree1, x_degree2,
+            "X degrees don't match for case where x_size > y_size: {} vs {}", 
+            x_degree1, x_degree2
+        );
+        
+        assert_eq!(
+            y_degree1, y_degree2,
+            "Y degrees don't match for case where x_size > y_size: {} vs {}", 
+            y_degree1, y_degree2
+        );
+        
+        // Test case 3: Edge case with zero polynomial
+        let coeffs2 = vec![ScalarField::zero(); X_SIZE * Y_SIZE];
+        let zero_poly = DensePolynomial::from_coeffs(HostSlice::from_slice(&coeffs2), X_SIZE * Y_SIZE);
+    
+        
+        let (x_degree1, y_degree1) = DensePolynomialExt::find_degree(&zero_poly, X_SIZE, Y_SIZE);
+        let (x_degree2, y_degree2) = DensePolynomialExtEP::find_degree(&zero_poly, X_SIZE, Y_SIZE);
+        
+        assert_eq!(
+            x_degree1, x_degree2,
+            "X degrees don't match for zero polynomial: {} vs {}", 
+            x_degree1, x_degree2
+        );
+        
+        assert_eq!(
+            y_degree1, y_degree2,
+            "Y degrees don't match for zero polynomial: {} vs {}", 
+            y_degree1, y_degree2
+        );
+        
+        // Test case 4: Complex polynomial with higher degrees
+        let mut coeffs3 = vec![ScalarField::zero(); X_SIZE * Y_SIZE];
+        coeffs3[7 + 9 * X_SIZE] = ScalarField::one();  // x^7 * y^9
+        coeffs3[3 + 11 * X_SIZE] = ScalarField::one(); // x^3 * y^11
+        
+        let complex_poly = DensePolynomial::from_coeffs(HostSlice::from_slice(&coeffs3), X_SIZE * Y_SIZE);
+        
+        let (x_degree1, y_degree1) = DensePolynomialExt::find_degree(&complex_poly, X_SIZE, Y_SIZE);
+        let (x_degree2, y_degree2) = DensePolynomialExtEP::find_degree(&complex_poly, X_SIZE, Y_SIZE);
+        
+        assert_eq!(
+            x_degree1, x_degree2,
+            "X degrees don't match for complex polynomial: {} vs {}", 
+            x_degree1, x_degree2
+        );
+        
+        assert_eq!(
+            y_degree1, y_degree2,
+            "Y degrees don't match for complex polynomial: {} vs {}", 
+            y_degree1, y_degree2
+        );
+        
+        println!("All tests passed: Both find_degree implementations produce identical results.");
     }
 }
 
