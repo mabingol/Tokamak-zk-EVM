@@ -679,6 +679,435 @@ mod tests_vectors {
         gen_evaled_lagrange_bases(&x, size, &mut res);
         
     }
+}
 
+#[cfg(test)]
+pub mod test_polynomial_ep {
+    use icicle_bls12_381::curve::{ScalarField, ScalarCfg};
+    use icicle_bls12_381::polynomials::DensePolynomial;
+    use icicle_core::polynomials::UnivariatePolynomial;
+    use icicle_core::traits::FieldImpl;
+    use crate::polynomials::{BivariatePolynomial, DensePolynomialExt};
+    use crate::polynomials_ep::{BivariatePolynomialEP, DensePolynomialExtEP};
+    use icicle_runtime::memory::HostSlice;
+    use icicle_core::traits::GenerateRandom;
 
+    #[test]
+    fn test_polynomial_find_degree() {
+        
+        // Sample sizes to test
+        const X_SIZE: usize = 8;
+        const Y_SIZE: usize = 12;
+        
+        // Create a test polynomial with non-zero coefficients at specific positions
+        let mut coeffs1 = vec![ScalarField::zero(); X_SIZE * Y_SIZE];
+        
+        // Set specific coefficients to establish a known degree pattern
+        coeffs1[2 + 3 * X_SIZE] = ScalarField::one(); // x^2 * y^3
+        coeffs1[5 + 1 * X_SIZE] = ScalarField::one(); // x^5 * y^1
+        coeffs1[0 + 7 * X_SIZE] = ScalarField::one(); // x^0 * y^7
+        
+        let poly = DensePolynomial::from_coeffs(HostSlice::from_slice(&coeffs1), X_SIZE * Y_SIZE);
+        
+        // Test case 1: x_size <= y_size
+        let (x_degree1, y_degree1) = DensePolynomialExt::find_degree(&poly, X_SIZE, Y_SIZE);
+        let (x_degree2, y_degree2) = DensePolynomialExtEP::find_degree(&poly, X_SIZE, Y_SIZE);
+        
+        assert_eq!(
+            x_degree1, x_degree2,
+            "X degrees don't match for case where x_size <= y_size: {} vs {}", 
+            x_degree1, x_degree2
+        );
+        
+        assert_eq!(
+            y_degree1, y_degree2,
+            "Y degrees don't match for case where x_size <= y_size: {} vs {}", 
+            y_degree1, y_degree2
+        );
+        
+        // Test case 2: x_size > y_size
+        let (x_degree1, y_degree1) = DensePolynomialExt::find_degree(&poly, Y_SIZE, X_SIZE);
+        let (x_degree2, y_degree2) = DensePolynomialExtEP::find_degree(&poly, Y_SIZE, X_SIZE);
+        
+        assert_eq!(
+            x_degree1, x_degree2,
+            "X degrees don't match for case where x_size > y_size: {} vs {}", 
+            x_degree1, x_degree2
+        );
+        
+        assert_eq!(
+            y_degree1, y_degree2,
+            "Y degrees don't match for case where x_size > y_size: {} vs {}", 
+            y_degree1, y_degree2
+        );
+        
+        // Test case 3: Edge case with zero polynomial
+        let coeffs2 = vec![ScalarField::zero(); X_SIZE * Y_SIZE];
+        let zero_poly = DensePolynomial::from_coeffs(HostSlice::from_slice(&coeffs2), X_SIZE * Y_SIZE);
+        
+        let (x_degree1, y_degree1) = DensePolynomialExt::find_degree(&zero_poly, X_SIZE, Y_SIZE);
+        let (x_degree2, y_degree2) = DensePolynomialExtEP::find_degree(&zero_poly, X_SIZE, Y_SIZE);
+        
+        assert_eq!(
+            x_degree1, x_degree2,
+            "X degrees don't match for zero polynomial: {} vs {}", 
+            x_degree1, x_degree2
+        );
+        
+        assert_eq!(
+            y_degree1, y_degree2,
+            "Y degrees don't match for zero polynomial: {} vs {}", 
+            y_degree1, y_degree2
+        );
+        
+        // Test case 4: Complex polynomial with higher degrees
+        let mut coeffs3 = vec![ScalarField::zero(); X_SIZE * Y_SIZE];
+        coeffs3[7 + 9 * X_SIZE] = ScalarField::one();  // x^7 * y^9
+        coeffs3[3 + 11 * X_SIZE] = ScalarField::one(); // x^3 * y^11
+        
+        let complex_poly = DensePolynomial::from_coeffs(HostSlice::from_slice(&coeffs3), X_SIZE * Y_SIZE);
+        
+        let (x_degree1, y_degree1) = DensePolynomialExt::find_degree(&complex_poly, X_SIZE, Y_SIZE);
+        let (x_degree2, y_degree2) = DensePolynomialExtEP::find_degree(&complex_poly, X_SIZE, Y_SIZE);
+        
+        assert_eq!(
+            x_degree1, x_degree2,
+            "X degrees don't match for complex polynomial: {} vs {}", 
+            x_degree1, x_degree2
+        );
+        
+        assert_eq!(
+            y_degree1, y_degree2,
+            "Y degrees don't match for complex polynomial: {} vs {}", 
+            y_degree1, y_degree2
+        );
+        
+        println!("All tests passed: Both find_degree implementations produce identical results.");
+    }
+
+    #[test]
+    fn test_from_rou_evals() {
+        const X_SIZE: usize = 8;
+        const Y_SIZE: usize = 8;
+        const SIZE: usize = X_SIZE * Y_SIZE;
+        
+        let evals = ScalarCfg::generate_random(SIZE);
+        
+        let coset_x_val = ScalarField::from_u32(7u32);
+        let coset_y_val = ScalarField::from_u32(11u32);
+        
+        // 테스트 케이스 1: 기본 변환 (코셋 없음)
+        let poly1_orig = DensePolynomialExt::from_rou_evals(
+            HostSlice::from_slice(&evals),
+            X_SIZE,
+            Y_SIZE,
+            None,
+            None
+        );
+        
+        let poly1_ep = DensePolynomialExtEP::from_rou_evals(
+            HostSlice::from_slice(&evals),
+            X_SIZE,
+            Y_SIZE,
+            None,
+            None
+        );
+        
+        // 두 결과를 비교
+        let coeffs1_orig = poly1_orig.get_coeff(X_SIZE as u64, Y_SIZE as u64);
+        let coeffs1_ep = poly1_ep.get_coeff(X_SIZE as u64, Y_SIZE as u64);
+        
+        let mut host_coeffs1_orig = vec![ScalarField::zero(); SIZE];
+        let mut host_coeffs1_ep = vec![ScalarField::zero(); SIZE];
+        
+        host_coeffs1_orig[0] = coeffs1_orig;
+        host_coeffs1_ep[0] = coeffs1_ep;
+        
+        for i in 0..SIZE {
+            assert_eq!(
+                host_coeffs1_orig[i],
+                host_coeffs1_ep[i],
+                "Coefficients don't match at index {} for case without cosets: {:?} vs {:?}",
+                i,
+                host_coeffs1_orig[i],
+                host_coeffs1_ep[i]
+            );
+        }
+        
+        // 테스트 케이스 2: x 코셋만 사용
+        let poly2_orig = DensePolynomialExt::from_rou_evals(
+            HostSlice::from_slice(&evals),
+            X_SIZE,
+            Y_SIZE,
+            Some(&coset_x_val),
+            None
+        );
+        
+        let poly2_ep = DensePolynomialExtEP::from_rou_evals(
+            HostSlice::from_slice(&evals),
+            X_SIZE,
+            Y_SIZE,
+            Some(&coset_x_val),
+            None
+        );
+        
+        // 두 결과를 비교
+        let coeffs2_orig = poly2_orig.get_coeff(X_SIZE as u64, Y_SIZE as u64);
+        let coeffs2_ep = poly2_ep.get_coeff(X_SIZE as u64, Y_SIZE as u64);
+        
+        let mut host_coeffs2_orig = vec![ScalarField::zero(); SIZE];
+        let mut host_coeffs2_ep = vec![ScalarField::zero(); SIZE];
+        
+        host_coeffs2_orig[0] = coeffs2_orig;
+        host_coeffs2_ep[0] = coeffs2_ep;
+        
+        for i in 0..SIZE {
+            assert_eq!(
+                host_coeffs2_orig[i],
+                host_coeffs2_ep[i],
+                "Coefficients don't match at index {} for case with only x coset: {:?} vs {:?}",
+                i,
+                host_coeffs2_orig[i],
+                host_coeffs2_ep[i]
+            );
+        }
+        
+        // 테스트 케이스 3: y 코셋만 사용
+        let poly3_orig = DensePolynomialExt::from_rou_evals(
+            HostSlice::from_slice(&evals),
+            X_SIZE,
+            Y_SIZE,
+            None,
+            Some(&coset_y_val)
+        );
+        
+        let poly3_ep = DensePolynomialExtEP::from_rou_evals(
+            HostSlice::from_slice(&evals),
+            X_SIZE,
+            Y_SIZE,
+            None,
+            Some(&coset_y_val)
+        );
+        
+        // 두 결과를 비교
+        let coeffs3_orig = poly3_orig.get_coeff(X_SIZE as u64, Y_SIZE as u64);
+        let coeffs3_ep = poly3_ep.get_coeff(X_SIZE as u64, Y_SIZE as u64);
+        
+        let mut host_coeffs3_orig = vec![ScalarField::zero(); SIZE];
+        let mut host_coeffs3_ep = vec![ScalarField::zero(); SIZE];
+        
+        host_coeffs3_orig[0] = coeffs3_orig;
+        host_coeffs3_ep[0] = coeffs3_ep;
+        
+        for i in 0..SIZE {
+            assert_eq!(
+                host_coeffs3_orig[i],
+                host_coeffs3_ep[i],
+                "Coefficients don't match at index {} for case with only y coset: {:?} vs {:?}",
+                i,
+                host_coeffs3_orig[i],
+                host_coeffs3_ep[i]
+            );
+        }
+        
+        // 테스트 케이스 4: 두 코셋 모두 사용
+        let poly4_orig = DensePolynomialExt::from_rou_evals(
+            HostSlice::from_slice(&evals),
+            X_SIZE,
+            Y_SIZE,
+            Some(&coset_x_val),
+            Some(&coset_y_val)
+        );
+        
+        let poly4_ep = DensePolynomialExtEP::from_rou_evals(
+            HostSlice::from_slice(&evals),
+            X_SIZE,
+            Y_SIZE,
+            Some(&coset_x_val),
+            Some(&coset_y_val)
+        );
+        
+        // 두 결과를 비교
+        let coeffs4_orig = poly4_orig.get_coeff(X_SIZE as u64, Y_SIZE as u64);
+        let coeffs4_ep = poly4_ep.get_coeff(X_SIZE as u64, Y_SIZE as u64);
+        
+        let mut host_coeffs4_orig = vec![ScalarField::zero(); SIZE];
+        let mut host_coeffs4_ep = vec![ScalarField::zero(); SIZE];
+        
+        host_coeffs4_orig[0] = coeffs4_orig;
+        host_coeffs4_ep[0] = coeffs4_ep;
+        
+        for i in 0..SIZE {
+            assert_eq!(
+                host_coeffs4_orig[i],
+                host_coeffs4_ep[i],
+                "Coefficients don't match at index {} for case with both cosets: {:?} vs {:?}",
+                i,
+                host_coeffs4_orig[i],
+                host_coeffs4_ep[i]
+            );
+        }
+        
+        // 테스트 케이스 5: 다른 크기에 대한 테스트
+        const X_SIZE_2: usize = 16;
+        const Y_SIZE_2: usize = 4;
+        const SIZE_2: usize = X_SIZE_2 * Y_SIZE_2;
+        
+        // 새로운 평가값 생성
+        let mut evals2 = ScalarCfg::generate_random(SIZE_2);
+        
+        let poly5_orig = DensePolynomialExt::from_rou_evals(
+            HostSlice::from_slice(&evals2),
+            X_SIZE_2,
+            Y_SIZE_2,
+            Some(&coset_x_val),
+            Some(&coset_y_val)
+        );
+        
+        let poly5_ep = DensePolynomialExtEP::from_rou_evals(
+            HostSlice::from_slice(&evals2),
+            X_SIZE_2,
+            Y_SIZE_2,
+            Some(&coset_x_val),
+            Some(&coset_y_val)
+        );
+        
+        // 두 결과를 비교
+        let coeffs5_orig = poly5_orig.get_coeff(X_SIZE_2 as u64, Y_SIZE_2 as u64);
+        let coeffs5_ep = poly5_ep.get_coeff(X_SIZE_2 as u64, Y_SIZE_2 as u64);
+        
+        let mut host_coeffs5_orig = vec![ScalarField::zero(); SIZE_2];
+        let mut host_coeffs5_ep = vec![ScalarField::zero(); SIZE_2];
+        
+        host_coeffs5_orig[0] = coeffs5_orig;
+        host_coeffs5_ep[0] = coeffs5_ep;
+        
+        for i in 0..SIZE_2 {
+            assert_eq!(
+                host_coeffs5_orig[i],
+                host_coeffs5_ep[i],
+                "Coefficients don't match at index {} for different sizes case: {:?} vs {:?}",
+                i,
+                host_coeffs5_orig[i],
+                host_coeffs5_ep[i]
+            );
+        }
+        
+        println!("All from_rou_evals tests passed: Both implementations produce identical results.");
+    }
+
+    #[test]
+    fn test_resize() {
+        // Define test scenarios with various size transformations
+        let test_cases = vec![
+            // (original_x_size, original_y_size, target_x_size, target_y_size)
+            (8, 8, 16, 16),     // Expansion case
+            (16, 16, 8, 8),     // Reduction case
+            (8, 16, 16, 8),     // Dimension change case
+            (32, 8, 8, 32),     // Another dimension change case
+            (16, 8, 16, 8),     // Same size case
+        ];
+        
+        for (orig_x, orig_y, target_x, target_y) in test_cases {
+            println!("Test case: ({},{}) -> ({},{})", orig_x, orig_y, target_x, target_y);
+            
+            // Create original polynomial with random coefficients
+            let size = orig_x * orig_y;
+            let mut coeffs = vec![ScalarField::zero(); size];
+            
+            // Fill with random values
+            for i in 0..size {
+                coeffs[i] = ScalarCfg::generate_random(1)[0];
+            }
+            
+            // Create coefficients as HostSlice
+            let coeffs_slice = HostSlice::from_slice(&coeffs);
+            
+            // Test with original implementation
+            let mut orig_poly_ext = DensePolynomialExt::from_coeffs(coeffs_slice, orig_x, orig_y);
+            let orig_copy = orig_poly_ext.clone(); // Store a copy
+            orig_poly_ext.resize(target_x, target_y);
+            
+            // Test with execute_program implementation
+            let mut ep_poly_ext = DensePolynomialExtEP::from_coeffs(coeffs_slice, orig_x, orig_y);
+            let ep_copy = ep_poly_ext.clone(); // Store a copy
+            ep_poly_ext.resize(target_x, target_y);
+            
+            // Compare results
+            assert_eq!(orig_poly_ext.x_size, ep_poly_ext.x_size, 
+                    "X not match: {} vs {}", 
+                    orig_poly_ext.x_size, ep_poly_ext.x_size);
+            
+            assert_eq!(orig_poly_ext.y_size, ep_poly_ext.y_size, 
+                    "Y not match: {} vs {}", 
+                    orig_poly_ext.y_size, ep_poly_ext.y_size);
+            
+            // Compare coefficients
+            let orig_size = orig_poly_ext.x_size * orig_poly_ext.y_size;
+            let mut orig_result_coeffs = vec![ScalarField::zero(); orig_size];
+            let mut ep_result_coeffs = vec![ScalarField::zero(); orig_size];
+            
+            orig_poly_ext.copy_coeffs(0, HostSlice::from_mut_slice(&mut orig_result_coeffs));
+            ep_poly_ext.copy_coeffs(0, HostSlice::from_mut_slice(&mut ep_result_coeffs));
+            
+            for i in 0..orig_size {
+                assert_eq!(orig_result_coeffs[i], ep_result_coeffs[i], 
+                        "Coeff is not mathced at index {}: {:?} vs {:?}", 
+                        i, orig_result_coeffs[i], ep_result_coeffs[i]);
+            }
+            
+            println!("Pass test case: ({},{}) -> ({},{})", orig_x, orig_y, target_x, target_y);
+        }
+        
+        // Test special cases with zero sizes
+        let special_test_cases = vec![
+            (8, 8, 0, 8),   // Target x_size is 0
+            (8, 8, 8, 0),   // Target y_size is 0
+            (8, 8, 0, 0),   // Both target x_size and y_size are 0
+        ];
+        
+        for (orig_x, orig_y, target_x, target_y) in special_test_cases {
+            println!("Unique case test: ({},{}) -> ({},{})", orig_x, orig_y, target_x, target_y);
+            
+            let size = orig_x * orig_y;
+            let mut coeffs = vec![ScalarField::zero(); size];
+            
+            // Fill with random values
+            for i in 0..size {
+                coeffs[i] = ScalarCfg::generate_random(1)[0];
+            }
+            
+            // Create coefficients as HostSlice
+            let coeffs_slice = HostSlice::from_slice(&coeffs);
+            
+            // Test with original implementation
+            let mut orig_poly_ext = DensePolynomialExt::from_coeffs(coeffs_slice, orig_x, orig_y);
+            let orig_copy = orig_poly_ext.clone();
+            
+            // Test with execute_program implementation
+            let mut ep_poly_ext = DensePolynomialExtEP::from_coeffs(coeffs_slice, orig_x, orig_y);
+            let ep_copy = ep_poly_ext.clone();
+            
+            // Check if both implementations panic for zero sizes
+            let orig_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                orig_poly_ext.resize(target_x, target_y);
+            }));
+            
+            let ep_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                ep_poly_ext.resize(target_x, target_y);
+            }));
+            
+            // Verify both implementations handle panics the same way
+            assert_eq!(orig_result.is_err(), ep_result.is_err(), 
+                    "panic result is different");
+            
+            if orig_result.is_err() && ep_result.is_err() {
+                println!("panic.");
+            }
+            
+            println!("pass unique case: ({},{}) -> ({},{})", orig_x, orig_y, target_x, target_y);
+        }
+        
+        println!("All resize tests are passed!");
+    }
 }

@@ -15,6 +15,8 @@ use std::{
 };
 use rayon::prelude::*;
 
+use crate::polynomials::{BivariatePolynomial, DensePolynomialExt};
+
 fn _find_size_as_twopower(target_x_size: usize, target_y_size: usize) -> (usize, usize) {
     // Problem: find min{m: x_size*2^m >= target_x_size} and min{n: y_size*2^n >= target_y_size}
     if target_x_size == 0 || target_y_size == 0 {
@@ -391,25 +393,29 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         }
     }
 
-    fn from_rou_evals<S: HostOrDeviceSlice<Self::Field> + ?Sized>(evals: &S, x_size: usize, y_size: usize, coset_x: Option<&Self::Field>, coset_y: Option<&Self::Field>) -> Self {
+    fn from_rou_evals<S: HostOrDeviceSlice<Self::Field> + ?Sized>(
+        evals: &S, 
+        x_size: usize, 
+        y_size: usize, 
+        coset_x: Option<&Self::Field>, 
+        coset_y: Option<&Self::Field>
+    ) -> Self {
         if x_size == 0 || y_size == 0 {
             panic!("Invalid matrix size for from_rou_evals");
         }
         if x_size.is_power_of_two() == false || y_size.is_power_of_two() == false {
             panic!("The input sizes for from_rou_evals must be powers of two.")
         }
-
+    
         let size = x_size * y_size;
-
+    
         ntt::initialize_domain::<Self::Field>(
             ntt::get_root_of_unity::<Self::Field>(
-                size.try_into()
-                    .unwrap(),
+                size.try_into().unwrap(),
             ),
             &ntt::NTTInitDomainConfig::default(),
-        )
-        .unwrap();
-
+        ).unwrap();
+    
         let mut coeffs = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
         let mut cfg = ntt::NTTConfig::<Self::Field>::default();
         
@@ -417,42 +423,87 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         cfg.batch_size = y_size as i32;
         cfg.columns_batch = false;
         ntt::ntt(evals, ntt::NTTDir::kInverse, &cfg, &mut coeffs).unwrap();
+        
         // IFFT along Y
         cfg.batch_size = x_size as i32;
         cfg.columns_batch = true;
         ntt::ntt_inplace(&mut coeffs, ntt::NTTDir::kInverse, &cfg).unwrap();
-
+    
         let mut scaled_coeffs = coeffs;
         let vec_ops_cfg = VecOpsConfig::default();
-
+    
+        let mul_program = FieldProgram::new(
+            |vars: &mut Vec<FieldSymbol>| {
+                vars[2] = vars[0] * vars[1];
+            },
+            3 
+        ).unwrap();
+    
         if let Some(_factor) = coset_x {
             let factor = _factor.inv();
             let mut _right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
             let mut scaler = Self::Field::one();
+            
             for ind in 0..x_size {
                 _right_scale[ind * y_size .. (ind+1) * y_size].copy_from_host(HostSlice::from_slice(&vec![scaler; y_size])).unwrap();
                 scaler = scaler.mul(factor);
             }
+            
             let mut right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
             Self::FieldConfig::transpose(&_right_scale, x_size as u32, y_size as u32, &mut right_scale, &vec_ops_cfg).unwrap();
-            let mut temp = DeviceVec::<Self::Field>::device_malloc( size ).unwrap();
-            Self::FieldConfig::mul(&scaled_coeffs, &right_scale, &mut temp, &vec_ops_cfg).unwrap();
+            
+            let mut temp = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+            
+            let mut host_a = vec![Self::Field::zero(); size];
+            let mut host_b = vec![Self::Field::zero(); size];
+            let mut host_result = vec![Self::Field::zero(); size];
+            
+            scaled_coeffs.copy_to_host(HostSlice::from_mut_slice(&mut host_a)).unwrap();
+            right_scale.copy_to_host(HostSlice::from_mut_slice(&mut host_b)).unwrap();
+            
+            let mut parameters = vec![
+                HostSlice::from_slice(&host_a),
+                HostSlice::from_slice(&host_b),
+                HostSlice::from_mut_slice(&mut host_result)
+            ];
+            
+            execute_program(&mut parameters, &mul_program, &vec_ops_cfg).unwrap();
+            
+            temp.copy_from_host(HostSlice::from_slice(&host_result)).unwrap();
             scaled_coeffs = temp;
         }
-
+    
         if let Some(_factor) = coset_y {
             let factor = _factor.inv();
             let mut left_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
             let mut scaler = Self::Field::one();
+            
             for ind in 0..y_size {
                 left_scale[ind * x_size .. (ind+1) * x_size].copy_from_host(HostSlice::from_slice(&vec![scaler; x_size])).unwrap();
                 scaler = scaler.mul(factor);
             }
-            let mut temp = DeviceVec::<Self::Field>::device_malloc(size ).unwrap();
-            Self::FieldConfig::mul(&scaled_coeffs, &left_scale, &mut temp, &vec_ops_cfg).unwrap();
+            
+            let mut temp = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+            
+            let mut host_a = vec![Self::Field::zero(); size];
+            let mut host_b = vec![Self::Field::zero(); size];
+            let mut host_result = vec![Self::Field::zero(); size];
+            
+            scaled_coeffs.copy_to_host(HostSlice::from_mut_slice(&mut host_a)).unwrap();
+            left_scale.copy_to_host(HostSlice::from_mut_slice(&mut host_b)).unwrap();
+            
+            let mut parameters = vec![
+                HostSlice::from_slice(&host_a),
+                HostSlice::from_slice(&host_b),
+                HostSlice::from_mut_slice(&mut host_result)
+            ];
+            
+            execute_program(&mut parameters, &mul_program, &vec_ops_cfg).unwrap();
+            
+            temp.copy_from_host(HostSlice::from_slice(&host_result)).unwrap();
             scaled_coeffs = temp;
         }
-
+    
         DensePolynomialExtEP::from_coeffs(&scaled_coeffs, x_size, y_size)
     }
 
@@ -611,27 +662,49 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
     }
 
     
-    fn resize(&mut self, target_x_size: usize, target_y_size: usize){
+    fn resize(&mut self, target_x_size: usize, target_y_size: usize) {
         let (new_x_size, new_y_size) = _find_size_as_twopower(target_x_size, target_y_size);
         if self.x_size == new_x_size && self.y_size == new_y_size {
             return
         }
+        
         let new_size: usize = new_x_size * new_y_size;
         let mut orig_coeffs_vec = Vec::<Self::Field>::with_capacity(self.x_size * self.y_size);
         unsafe{orig_coeffs_vec.set_len(self.x_size * self.y_size);}
         let orig_coeffs = HostSlice::from_mut_slice(&mut orig_coeffs_vec);
         self.copy_coeffs(0, orig_coeffs);
-
+    
         let mut res_coeffs_vec = vec![Self::Field::zero(); new_size];
-        for i in 0 .. cmp::min(self.y_size, new_y_size) {
-            let each_x_size = cmp::min(self.x_size, new_x_size);
-            res_coeffs_vec[new_x_size * i .. new_x_size * i + each_x_size].copy_from_slice(
-                &orig_coeffs_vec[self.x_size * i .. self.x_size * i + each_x_size]
-            );  
-        }
-
-        let res_coeffs = HostSlice::from_mut_slice(&mut res_coeffs_vec);
         
+        let copy_program = FieldProgram::new(
+            |vars: &mut Vec<FieldSymbol>| {
+                vars[1] = vars[0];
+            },
+            2 
+        ).unwrap();
+        
+        let vec_ops_cfg = VecOpsConfig::default();
+        
+        for i in 0..cmp::min(self.y_size, new_y_size) {
+            let each_x_size = cmp::min(self.x_size, new_x_size);
+            
+            let src_start = self.x_size * i;
+            let dst_start = new_x_size * i;
+            
+            let src_row = &orig_coeffs_vec[src_start..src_start + each_x_size];
+            let mut dst_row = vec![Self::Field::zero(); each_x_size]; 
+            
+            let mut parameters = vec![
+                HostSlice::from_slice(src_row),
+                HostSlice::from_mut_slice(&mut dst_row)
+            ];
+            
+            execute_program(&mut parameters, &copy_program, &vec_ops_cfg).unwrap();
+            
+            res_coeffs_vec[dst_start..dst_start + each_x_size].copy_from_slice(&dst_row);
+        }
+    
+        let res_coeffs = HostSlice::from_slice(&res_coeffs_vec);
         self.poly = DensePolynomial::from_coeffs(res_coeffs, new_size);
         self.x_size = new_x_size;
         self.y_size = new_y_size;
