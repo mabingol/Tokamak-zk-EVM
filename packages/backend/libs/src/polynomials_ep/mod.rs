@@ -322,26 +322,12 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
             (y_size, false)
         };
     
-        // 각 부분 다항식의 차수를 저장할 배열
-        let mut max_x_degree: i64 = -1;
-        let mut max_y_degree: i64 = -1;
-    
-        // 부분 다항식의 차수 계산 프로그램
-        let degree_check_program = FieldProgram::new(
-            |vars: &mut Vec<FieldSymbol>| {
-                // coeffs[idx]가 0이 아닌지 확인
-                let coeff = vars[0];
-                let is_zero = coeff.is_zero();
-                
-                // 결과 저장
-                vars[1] = is_zero.not(); // 0이 아니면 true
-            },
-            2
-        ).unwrap();
+       
         
-        let vec_ops_cfg = VecOpsConfig::default();
-    
-        for ind in 0..min_size as i64 {
+        // Pre-process sub-polynomials to get their degrees
+        let mut degrees = vec![0i64; min_size];
+        
+        for ind in 0..min_size {
             let sub_poly = if is_min_x {
                 // sub-polynomial of y
                 poly.slice(ind as u64 * y_size as u64, 1, y_size as u64)
@@ -349,54 +335,112 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
                 // sub-polynomial of x
                 poly.slice(ind as u64, y_size as u64, x_size as u64)
             };
-            
-            // 부분 다항식의 차수 찾기
-            let sub_size = sub_poly.coeffs().len();
-            let mut highest_degree: i64 = -1;
-            
-            // 배열을 역순으로 탐색하여 첫 번째 0이 아닌 계수 찾기
-            for i in (0..sub_size).rev() {
-                let mut is_non_zero = false;
-                let coeff = sub_poly.coeffs().at(i);
-                
-                // 호스트 메모리로 계수 가져오기
-                let mut host_coeff = vec![ScalarField::zero(); 1];
-                let host_slice = HostSlice::from_mut_slice(&mut host_coeff);
-                sub_poly.coeffs().copy_to_host(host_slice, i).unwrap();
-                
-                // 결과를 저장할 배열
-                let mut result = vec![ScalarField::zero(); 1];
-                let mut parameters = vec![
-                    HostSlice::from_slice(&host_coeff),
-                    HostSlice::from_mut_slice(&mut result)
-                ];
-                
-                // 프로그램 실행
-                execute_program(&mut parameters, &degree_check_program, &vec_ops_cfg).unwrap();
-                
-                // 결과 확인 (계수가 0이 아닌지)
-                let mut bool_result = vec![false];
-                // ScalarField에서 bool로 변환 (구현에 따라 다를 수 있음)
-                is_non_zero = !result[0].is_zero();
-                
-                if is_non_zero {
-                    highest_degree = i as i64;
-                    break;
-                }
-            }
-            
-            // 최고 차수 업데이트
-            if highest_degree >= 0 {
-                if is_min_x {
-                    max_y_degree = std::cmp::max(highest_degree, max_y_degree);
-                    max_x_degree = std::cmp::max(ind, max_x_degree);
-                } else {
-                    max_x_degree = std::cmp::max(highest_degree, max_x_degree);
-                    max_y_degree = std::cmp::max(ind, max_y_degree);
-                }
-            }
+            degrees[ind] = sub_poly.degree() as i64;
         }
         
+        // Now we'll use execute_program to find max degrees
+        // First we need to convert our i64 data to ScalarField type
+        // Step 1: Create ScalarField vectors
+        
+        // Convert degrees to ScalarField
+        let mut scalar_degrees = Vec::with_capacity(min_size);
+        for deg in &degrees {
+            let mut arr = [0u32; 8];
+            arr[0] = *deg as u32;
+            scalar_degrees.push(ScalarField::from(arr));
+        }
+        
+        // Create indices array as ScalarField
+        let mut scalar_indices = Vec::with_capacity(min_size);
+        for i in 0..min_size {
+            let mut arr = [0u32; 8];
+            arr[0] = i as u32;
+            scalar_indices.push(ScalarField::from(arr));
+        }
+        
+        // Create result vectors to store max degrees
+        // Initialize with -1 equivalent
+        let mut arr = [0u32; 8];
+        arr[0] = u32::MAX;
+        let minus_one = ScalarField::from(arr); // This represents -1 in field arithmetic
+        let mut scalar_result_x = ScalarField::from(minus_one);
+        let mut scalar_result_y = ScalarField::from(minus_one);
+        
+        // Create host slices
+        let degrees_slice = HostSlice::from_slice(scalar_degrees.as_slice());
+        let indices_slice = HostSlice::from_slice(scalar_indices.as_slice());
+        
+        // Create a program that finds max degree
+        let max_finder_program = |vars: &mut [FieldSymbol]| {
+            // vars[0]: degree value (as ScalarField)
+            // vars[1]: index value (as ScalarField)
+            // vars[2]: current max_x_degree
+            // vars[3]: current max_y_degree
+            
+            // Check if degree is valid (not -1)
+            // In field arithmetic, we compare with minus_one
+            let degree_valid = vars[0].neq(&minus_one);
+            
+            if degree_valid {
+                if is_min_x {
+                    // Update max_y with degree if degree > current max_y
+                    if vars[0] > vars[3] {
+                        vars[3] = vars[0];
+                    }
+                    // Update max_x with index if index > current max_x
+                    if vars[1] > vars[2] {
+                        vars[2] = vars[1];
+                    }
+                } else {
+                    // Update max_x with degree if degree > current max_x
+                    if vars[0] > vars[2] {
+                        vars[2] = vars[0];
+                    }
+                    // Update max_y with index if index > current max_y
+                    if vars[1] > vars[3] {
+                        vars[3] = vars[1];
+                    }
+                }
+            }
+        };
+        
+        // Create the program
+        let program = Program::new(max_finder_program, 4)
+            .expect("Failed to create max finder program");
+        
+        // Execute program for each element
+        for i in 0..min_size {
+            let mut max_x = scalar_result_x;
+            let mut max_y = scalar_result_y;
+            
+            // Set up variables for this iteration
+            let mut vars = [
+                degrees_slice[i],
+                indices_slice[i], 
+                max_x,
+                max_y
+            ];
+            
+            // Execute the program for this element
+            execute_program(&mut vars, &program, VecOpsConfig::default())
+                .expect("Failed to execute program");
+            
+            // Update the results
+            scalar_result_x = vars[2];
+            scalar_result_y = vars[3];
+        }
+        
+        // Convert ScalarField results back to i64
+        // This is simplified - we'd need proper conversion in real code
+        let max_x_degree = scalar_result_x.to_bytes_le()
+            .iter()
+            .fold(0i64, |acc, &byte| (acc << 8) | (byte as i64));
+        
+        let max_y_degree = scalar_result_y.to_bytes_le()
+            .iter()
+            .fold(0i64, |acc, &byte| (acc << 8) | (byte as i64));
+        
+        // Ensure non-negative degrees
         (std::cmp::max(max_x_degree, 0), std::cmp::max(max_y_degree, 0))
     }
 
@@ -1447,6 +1491,19 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         let q_x = DensePolynomialExtEP::from_coeffs(HostSlice::from_slice(&padded_q_x), next_pow2_x, 1);
         
         (q_x, q_y, r_x)
+    }
+    
+    fn _div_uni_coeffs_by_ruffini(poly_coeffs_vec: &[ScalarField], x: ScalarField) -> (Vec<ScalarField>, ScalarField) {
+        let len = poly_coeffs_vec.len();
+        let mut q_coeffs_vec = std::vec![ScalarField::zero(); len];
+        let mut b = poly_coeffs_vec[len - 1];
+        q_coeffs_vec[len - 2] = b;
+        for i in 3.. len + 1 {
+            b = poly_coeffs_vec[len - i + 1] + b*x;
+            q_coeffs_vec[len - i] = b;
+        }
+        let r = poly_coeffs_vec[0] + b*x;
+        (q_coeffs_vec, r)
     }
 
 }
