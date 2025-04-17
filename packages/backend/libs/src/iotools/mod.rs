@@ -43,27 +43,27 @@ impl SetupParams {
 }
 
 // impl Sigma {
-//     /// Write full CRS from JSON
-//     // pub fn read_from_json(path: &str) -> io::Result<Self> {
-//     //     let abs_path = env::current_dir()?.join(path);
-//     //     let file = File::open(abs_path)?;
-//     //     let reader = BufReader::new(file);
-//     //     let sigma: Self = from_reader(reader)?;
-//     //     Ok(sigma)
-//     // }
+//     // Write full CRS from JSON
+//     pub fn read_from_json(path: &str) -> io::Result<Self> {
+//         let abs_path = env::current_dir()?.join(path);
+//         let file = File::open(abs_path)?;
+//         let reader = BufReader::new(file);
+//         let sigma: Self = from_reader(reader)?;
+//         Ok(sigma)
+//     }
     
-//     // /// Write full CRS into JSON
-//     // pub fn write_into_json(&self, path: &str) -> io::Result<()> {
-//     //     let abs_path = env::current_dir()?.join(path);
-//     //     if let Some(parent) = abs_path.parent() {
-//     //         fs::create_dir_all(parent)?;
-//     //     }
-//     //     let file = File::create(&abs_path)?;
-//     //     let writer = BufWriter::new(file);
-//     //     to_writer_pretty(writer, self)?;
-//     //     println!("Sigma has been saved at {:?}", abs_path);
-//     //     Ok(())
-//     // }
+//     /// Write full CRS into JSON
+//     pub fn write_into_json(&self, path: &str) -> io::Result<()> {
+//         let abs_path = env::current_dir()?.join(path);
+//         if let Some(parent) = abs_path.parent() {
+//             fs::create_dir_all(parent)?;
+//         }
+//         let file = File::create(&abs_path)?;
+//         let writer = BufWriter::new(file);
+//         to_writer_pretty(writer, self)?;
+//         println!("Sigma has been saved at {:?}", abs_path);
+//         Ok(())
+//     }
 // }
 
 #[derive(Debug, Deserialize)]

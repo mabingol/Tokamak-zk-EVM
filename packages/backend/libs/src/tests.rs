@@ -15,7 +15,7 @@ mod tests {
     use icicle_core::curve::Curve;
 
     use super::*;
-    use crate::{conversion::Conversion, polynomials::{BivariatePolynomial, DensePolynomialExt}};
+    use crate::{conversion::Conversion, polynomials::{BivariatePolynomial, DensePolynomialExt}, polynomials_ep::{BivariatePolynomialEP, DensePolynomialExtEP}};
     use super::*;
     use crate::vector_operations::{*};
 
@@ -307,6 +307,25 @@ mod tests {
     }
 
     #[test]
+    fn test_div_by_ruffini_ep() {
+        let x_size = 2usize.pow(10);
+        let y_size = 2usize.pow(5);
+        let p_coeffs_vec = ScalarCfg::generate_random(x_size * y_size);
+        let p = DensePolynomialExtEP::from_coeffs(HostSlice::from_slice(&p_coeffs_vec), x_size, y_size);
+        let x = ScalarCfg::generate_random(1)[0];
+        let y = ScalarCfg::generate_random(1)[0];
+        
+        let (q_x, q_y, r) = p.div_by_ruffini(x, y);
+        let a = ScalarCfg::generate_random(1)[0];
+        let b = ScalarCfg::generate_random(1)[0];
+        let q_x_eval = q_x.eval(&a, &b);
+        let q_y_eval = q_y.eval(&a, &b);
+        let estimated_p_eval = (q_x_eval * (a - x)) + (q_y_eval * (b - y)) + r;
+        let true_p_eval = p.eval(&a, &b);
+        assert!(estimated_p_eval.eq(&true_p_eval));
+    }
+
+    #[test]
     fn test_ark_pairing() {
         let size = 2usize.pow(6);
         let g1_point = CurveCfg::generate_random_affine_points(size)[0];
@@ -316,7 +335,7 @@ mod tests {
         let ark_g2_point = Conversion::icicle_g2_affine_to_ark(&g2_point);
         println!("ark_g1_point: {:?}", ark_g1_point);
         println!("ark_g2_point: {:?}", ark_g2_point);
-        let pairing_result = Bls12_381::pairing(ark_g1_point, ark_g2_point);
+        // let pairing_result = Bls12_381::pairing(ark_g1_point, ark_g2_point);
         // println!("pairing_result: {:?}", pairing_result);
         if Conversion::verify_bilinearity(ark_g1_point, ark_g2_point) {
             println!("Bilinearity verified: e(2*G1, G2) == e(G1, G2)^2");
@@ -1380,61 +1399,7 @@ mod tests_vanishing {
             assert_eq!(coeffs1[i], coeffs2[i], "{}: coefficient at index {} mismatch", msg, i);
         }
     }
-    // #[test]
-    // fn test_div_by_vanishing_basic() {
-        
-    //     // 8x8 다항식 (m=2, n=2, denom_x=4, denom_y=4)
-    //     let (poly_orig, poly_ep) = create_test_polynomial(8, 8, 3);
-        
-    //     // 원본 구현 결과 확인
-    //     let (quo_x_orig, quo_y_orig) = poly_orig.div_by_vanishing(4, 4);
-        
-    //     // EP 구현 결과 확인
-    //     let (quo_x_ep, quo_y_ep) = poly_ep.div_by_vanishing(4, 4);
-        
-    //     // 결과 비교
-    //     assert_polynomials_equal(&quo_x_orig, &quo_x_ep, "quotient_x");
-    //     assert_polynomials_equal(&quo_y_orig, &quo_y_ep, "quotient_y");
-        
-    //     // 결과 검증: 원본 = quo_x * (x^4 - 1) + quo_y * (y^4 - 1) - quo_x * quo_y * (x^4 - 1) * (y^4 - 1)
-        
-    //     // 바니싱 다항식 생성 (x^4 - 1)
-    //     let mut x_vanishing_coeffs = vec![ScalarField::zero(); 5];
-    //     x_vanishing_coeffs[0] = ScalarField::one().neg();
-    //     x_vanishing_coeffs[4] = ScalarField::one();
-    //     let x_vanishing = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&x_vanishing_coeffs), 5, 1);
-        
-    //     // 바니싱 다항식 생성 (y^4 - 1)
-    //     let mut y_vanishing_coeffs = vec![ScalarField::zero(); 5];
-    //     y_vanishing_coeffs[0] = ScalarField::one().neg();
-    //     y_vanishing_coeffs[4] = ScalarField::one();
-    //     let y_vanishing = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&y_vanishing_coeffs), 1, 5);
-        
-    //     // 검증: quo_x * (x^4 - 1)
-    //     let term1 = quo_x_orig._mul(&x_vanishing);
-        
-    //     // 검증: quo_y * (y^4 - 1)
-    //     let term2 = quo_y_orig._mul(&y_vanishing);
-        
-    //     // 바니싱 다항식 곱 (x^4 - 1) * (y^4 - 1)
-    //     let xy_vanishing = x_vanishing._mul(&y_vanishing);
-        
-    //     // 검증: quo_x * quo_y * (x^4 - 1) * (y^4 - 1)
-    //     let quo_product = quo_x_orig._mul(&quo_y_orig);
-    //     let term3 = quo_product._mul(&xy_vanishing);
-        
-    //     // 최종 검증: term1 + term2 - term3 == poly_orig
-    //     let result = &(&term1 + &term2) - &term3;
-        
-    //     // 크기가 다를 수 있으므로 먼저 크기를 맞춰줌
-    //     let mut resized_result = result.clone();
-    //     resized_result.resize(poly_orig.x_size, poly_orig.y_size);
-        
-    //     // 최종 비교
-    //     assert_polynomials_equal(&poly_orig, &resized_result, "reconstruction");
-    // }
     
-     // 더 큰 m 값을 가진 케이스 (m>2, n=2) 테스트
      #[test]
      fn test_div_by_vanishing_larger_m() {
          

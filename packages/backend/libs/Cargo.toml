@@ -3,6 +3,9 @@ name = "libs"
 version = { workspace = true }
 edition = { workspace = true }
 
+[profile.dev]
+warnings = false
+
 [dependencies]
 icicle-runtime = { workspace = true }
 icicle-core = { workspace = true }

@@ -431,6 +431,7 @@ impl BivariatePolynomial for DensePolynomialExt {
             let factor = _factor.inv();
             let mut left_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
             let mut scaler = Self::Field::one();
+            // 이쪽 부분 개선 목표
             for ind in 0..x_size {
                 left_scale[ind * y_size .. (ind+1) * y_size].copy_from_host(HostSlice::from_slice(&vec![scaler; y_size])).unwrap();
                 scaler = scaler.mul(factor);
@@ -444,6 +445,7 @@ impl BivariatePolynomial for DensePolynomialExt {
             let factor = _factor.inv();
             let mut _right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
             let mut scaler = Self::Field::one();
+            // 이쪽 부분 개선 목표
             for ind in 0..y_size {
                 _right_scale[ind * x_size .. (ind+1) * x_size].copy_from_host(HostSlice::from_slice(&vec![scaler; x_size])).unwrap();
                 scaler = scaler.mul(factor);

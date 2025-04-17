@@ -9,6 +9,7 @@ use std::{
     cmp,
     ops::{Add, AddAssign, Mul, Sub, Neg},
 };
+use super::vector_operations::{*};
 use rayon::prelude::*;
 
 fn _find_size_as_twopower(target_x_size: usize, target_y_size: usize) -> (usize, usize) {
@@ -287,6 +288,19 @@ where
     fn divide_y(&self, denominator: &Self) -> (Self, Self) where Self: Sized;
 
     fn _neg(&self) -> Self;
+
+    fn _div_uni_coeffs_by_ruffini(poly_coeffs_vec: &[ScalarField], x: ScalarField) -> (Vec<ScalarField>, ScalarField) {
+        let len = poly_coeffs_vec.len();
+        let mut q_coeffs_vec = vec![ScalarField::zero(); len];
+        let mut b = poly_coeffs_vec[len - 1];
+        q_coeffs_vec[len - 2] = b;
+        for i in 3.. len + 1 {
+            b = poly_coeffs_vec[len - i + 1] + b*x;
+            q_coeffs_vec[len - i] = b;
+        }
+        let r = poly_coeffs_vec[0] + b*x;
+        (q_coeffs_vec, r)
+    }
 
 }
 

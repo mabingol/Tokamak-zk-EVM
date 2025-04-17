@@ -33,7 +33,7 @@ fn bench_find_degree(c: &mut Criterion) {
     // Small polynomial benchmark
     let small_x = 64;
     let small_y = 128;
-    let small_poly = create_test_polynomial(small_x, small_y, 20);
+    let small_poly = create_test_polynomial(small_x, small_y, 1);
     
     let mut group = c.benchmark_group("find_degree_small");
     group.bench_function("original", |b| {
@@ -891,13 +891,134 @@ fn bench_to_rou_evals(c: &mut Criterion) {
   group.finish();
 }
 
+use std::time::Duration;
+
+
+// 원본 구현과 execute_program 구현 비교 벤치마크
+fn benchmark_compare_implementations(c: &mut Criterion) {
+    let sizes = vec![(8, 8), (16, 16), (32, 32)];
+    
+    let mut group = c.benchmark_group("div_by_ruffini_implementation_comparison");
+    group.measurement_time(Duration::from_secs(10));
+    group.sample_size(10);
+    
+    for (x_size, y_size) in sizes {
+        // 테스트용 다항식 생성
+        let coeffs = ScalarCfg::generate_random(x_size * y_size);
+        
+        // 원본 구현용 다항식
+        let poly_original = DensePolynomialExt::from_coeffs(
+            HostSlice::from_slice(&coeffs),
+            x_size,
+            y_size,
+        );
+        
+        // execute_program 구현용 다항식
+        let poly_ep = DensePolynomialExtEP::from_coeffs(
+            HostSlice::from_slice(&coeffs),
+            x_size,
+            y_size,
+        );
+        
+        let x = ScalarCfg::generate_random(1)[0];
+        let y = ScalarCfg::generate_random(1)[0];
+        
+        // 원본 구현 벤치마크
+        group.bench_with_input(
+            BenchmarkId::new(format!("original_{}x{}", x_size, y_size), ""),
+            &(x_size, y_size),
+            |b, _| {
+                b.iter(|| {
+                    black_box(poly_original.div_by_ruffini(black_box(x), black_box(y)))
+                });
+            },
+        );
+        
+        // execute_program 구현 벤치마크
+        group.bench_with_input(
+            BenchmarkId::new(format!("execute_program_{}x{}", x_size, y_size), ""),
+            &(x_size, y_size),
+            |b, _| {
+                b.iter(|| {
+                    black_box(poly_ep.div_by_ruffini(black_box(x), black_box(y)))
+                });
+            },
+        );
+    }
+    
+    group.finish();
+}
+
+// 실행 시간에 따른 스케일링 분석 벤치마크
+fn benchmark_scaling(c: &mut Criterion) {
+    // 다양한 크기로 스케일링 분석
+    let x_sizes = vec![4, 8, 16, 32, 64, 128];
+    let y_sizes = vec![4, 8, 16, 32];
+    
+    let mut group = c.benchmark_group("div_by_ruffini_scaling");
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(5);
+    
+    // X 크기 스케일링 (Y 고정)
+    let fixed_y = 8;
+    for x_size in &x_sizes {
+        let coeffs = ScalarCfg::generate_random(*x_size * fixed_y);
+        let poly = DensePolynomialExtEP::from_coeffs(
+            HostSlice::from_slice(&coeffs),
+            *x_size,
+            fixed_y,
+        );
+        
+        let x = ScalarCfg::generate_random(1)[0];
+        let y = ScalarCfg::generate_random(1)[0];
+        
+        group.bench_with_input(
+            BenchmarkId::new(format!("x_scaling_{}x{}", x_size, fixed_y), ""),
+            x_size,
+            |b, _| {
+                b.iter(|| {
+                    black_box(poly.div_by_ruffini(black_box(x), black_box(y)))
+                });
+            },
+        );
+    }
+    
+    // Y 크기 스케일링 (X 고정)
+    let fixed_x = 8;
+    for y_size in &y_sizes {
+        let coeffs = ScalarCfg::generate_random(fixed_x * *y_size);
+        let poly = DensePolynomialExtEP::from_coeffs(
+            HostSlice::from_slice(&coeffs),
+            fixed_x,
+            *y_size,
+        );
+        
+        let x = ScalarCfg::generate_random(1)[0];
+        let y = ScalarCfg::generate_random(1)[0];
+        
+        group.bench_with_input(
+            BenchmarkId::new(format!("y_scaling_{}x{}", fixed_x, y_size), ""),
+            y_size,
+            |b, _| {
+                b.iter(|| {
+                    black_box(poly.div_by_ruffini(black_box(x), black_box(y)))
+                });
+            },
+        );
+    }
+    
+    group.finish();
+}
+
+
 criterion_group!(
   benches, 
-  // bench_find_degree, 
-  // bench_from_rou_evals,
+  bench_find_degree, 
+//   bench_from_rou_evals,
   // bench_resize,
   // bench_polynomial_mul,
   // bench_div_by_vanishing,
-  bench_to_rou_evals,
+//   bench_to_rou_evals,
+//   benchmark_compare_implementations
 );
 criterion_main!(benches);

@@ -13,6 +13,7 @@ use std::{
     cmp,
     ops::{Add, AddAssign, Mul, Sub, Neg},
 };
+use super::vector_operations::{*};
 use rayon::prelude::*;
 
 use crate::polynomials::{BivariatePolynomial, DensePolynomialExt};
@@ -294,78 +295,103 @@ where
 
     fn _neg(&self) -> Self;
 
+    fn _div_uni_coeffs_by_ruffini(poly_coeffs_vec: &[ScalarField], x: ScalarField) -> (Vec<ScalarField>, ScalarField) {
+        let len = poly_coeffs_vec.len();
+        let mut q_coeffs_vec = vec![ScalarField::zero(); len];
+        let mut b = poly_coeffs_vec[len - 1];
+        q_coeffs_vec[len - 2] = b;
+        for i in 3.. len + 1 {
+            b = poly_coeffs_vec[len - i + 1] + b*x;
+            q_coeffs_vec[len - i] = b;
+        }
+        let r = poly_coeffs_vec[0] + b*x;
+        (q_coeffs_vec, r)
+    }
+
 }
 
 impl BivariatePolynomialEP for DensePolynomialExtEP {
     type Field = ScalarField;
     type FieldConfig = ScalarCfg;
 
-    fn find_degree(poly: &DensePolynomial, x_size: usize, y_size: usize) -> (i64, i64) {
-        // Determine which dimension is smaller
+    fn find_degree(coeffs: &DensePolynomial, x_size: usize, y_size: usize) -> (i64, i64) {
+        let poly = coeffs;
         let (min_size, is_min_x) = if x_size <= y_size {
             (x_size, true)
         } else {
             (y_size, false)
         };
     
+        // 각 부분 다항식의 차수를 저장할 배열
         let mut max_x_degree: i64 = -1;
         let mut max_y_degree: i64 = -1;
-        let vec_ops_cfg = VecOpsConfig::default();
     
-        // Create a program that will process polynomial data
-        // This is a simplified implementation since we can't fully replicate polynomial degree calculation
-        let process_poly_program = FieldProgram::new(
+        // 부분 다항식의 차수 계산 프로그램
+        let degree_check_program = FieldProgram::new(
             |vars: &mut Vec<FieldSymbol>| {
-                // Program logic would go here
-                // Since FieldSymbol doesn't support direct comparison, we'll use a different approach
+                // coeffs[idx]가 0이 아닌지 확인
+                let coeff = vars[0];
+                let is_zero = coeff.is_zero();
                 
-                // We're creating a simple pass-through program
-                // In a real implementation, this would contain logic to analyze polynomial data
-                vars[1] = vars[0]; // Simply copy input to output as placeholder
+                // 결과 저장
+                vars[1] = is_zero.not(); // 0이 아니면 true
             },
-            2 // Input and output parameters
+            2
         ).unwrap();
+        
+        let vec_ops_cfg = VecOpsConfig::default();
     
         for ind in 0..min_size as i64 {
             let sub_poly = if is_min_x {
                 // sub-polynomial of y
-                poly.slice(ind as u64, x_size as u64, y_size as u64)
+                poly.slice(ind as u64 * y_size as u64, 1, y_size as u64)
             } else {
                 // sub-polynomial of x
-                poly.slice(ind as u64 * x_size as u64, 1, x_size as u64)
+                poly.slice(ind as u64, y_size as u64, x_size as u64)
             };
             
-            // Calculate degree using the original method
-            let curr_degree = sub_poly.degree() as i64;
+            // 부분 다항식의 차수 찾기
+            let sub_size = sub_poly.coeffs().len();
+            let mut highest_degree: i64 = -1;
             
-            // Create input for our program - a single value representing if polynomial is non-zero
-            let has_nonzero = if curr_degree > -1 { 
-                ScalarField::one() 
-            } else { 
-                ScalarField::zero() 
-            };
+            // 배열을 역순으로 탐색하여 첫 번째 0이 아닌 계수 찾기
+            for i in (0..sub_size).rev() {
+                let mut is_non_zero = false;
+                let coeff = sub_poly.coeffs().at(i);
+                
+                // 호스트 메모리로 계수 가져오기
+                let mut host_coeff = vec![ScalarField::zero(); 1];
+                let host_slice = HostSlice::from_mut_slice(&mut host_coeff);
+                sub_poly.coeffs().copy_to_host(host_slice, i).unwrap();
+                
+                // 결과를 저장할 배열
+                let mut result = vec![ScalarField::zero(); 1];
+                let mut parameters = vec![
+                    HostSlice::from_slice(&host_coeff),
+                    HostSlice::from_mut_slice(&mut result)
+                ];
+                
+                // 프로그램 실행
+                execute_program(&mut parameters, &degree_check_program, &vec_ops_cfg).unwrap();
+                
+                // 결과 확인 (계수가 0이 아닌지)
+                let mut bool_result = vec![false];
+                // ScalarField에서 bool로 변환 (구현에 따라 다를 수 있음)
+                is_non_zero = !result[0].is_zero();
+                
+                if is_non_zero {
+                    highest_degree = i as i64;
+                    break;
+                }
+            }
             
-            // Prepare for result
-            let mut result_value = ScalarField::zero();
-            
-            // Prepare slices for execute_program
-            let input_vec = vec![has_nonzero];
-            let input_slice = HostSlice::from_slice(&input_vec);
-            let mut output_array = [result_value];
-            let output_slice = HostSlice::from_mut_slice(&mut output_array);
-            
-            // Execute the program
-            let mut parameters = vec![input_slice, output_slice];
-            execute_program(&mut parameters, &process_poly_program, &vec_ops_cfg).unwrap();
-            
-            // Process the result 
-            // We're still using curr_degree since our program is just a placeholder
-            if curr_degree > -1 {
+            // 최고 차수 업데이트
+            if highest_degree >= 0 {
                 if is_min_x {
-                    max_y_degree = std::cmp::max(curr_degree, max_y_degree);
+                    max_y_degree = std::cmp::max(highest_degree, max_y_degree);
                     max_x_degree = std::cmp::max(ind, max_x_degree);
                 } else {
-                    max_x_degree = std::cmp::max(curr_degree, max_x_degree);
+                    max_x_degree = std::cmp::max(highest_degree, max_x_degree);
                     max_y_degree = std::cmp::max(ind, max_y_degree);
                 }
             }
@@ -432,7 +458,7 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         let mut scaled_coeffs = coeffs;
         let vec_ops_cfg = VecOpsConfig::default();
     
-        let mul_program = FieldProgram::new(
+        let mul_program: FieldProgram = FieldProgram::new(
             |vars: &mut Vec<FieldSymbol>| {
                 vars[2] = vars[0] * vars[1];
             },
@@ -1268,16 +1294,15 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         }
     }
 
-    fn div_by_ruffini(&self, x: Self::Field, y: Self:: Field) -> (Self, Self, Self::Field) where Self: Sized {
+    fn div_by_ruffini(&self, x: Self::Field, y: Self::Field) -> (Self, Self, Self::Field) where Self: Sized {
         // P(X,Y) = Q_Y(X,Y)(Y-y) + R_Y(X)
         // R_Y(X) = Q_X(X)(X-x) + R_X
         
         // Lengths of coeffs of P
         let x_len = self.x_size;
         let y_len = self.y_size;
-
+    
         // Step 1: Extract the coefficients of univariate polynomials in Y for each X-degree
-        // P(X,Y) = X^{deg-1} (P_{deg-1}(Y)) + X^{deg-2} (P_{deg-2}(Y)) + ... + X^{0} (P_{0}(Y))
         let mut p_i_coeffs_iter = vec![vec![Self::Field::zero();y_len]; x_len];
         for i in 0..x_len as u64 {
             let mut temp_vec = vec![Self::Field::zero(); y_len];
@@ -1286,38 +1311,141 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
             p_i_coeffs_iter[i as usize] = temp_vec;
         }
         
-        // Step 2: Divide each polynomial P_i(Y) by (Y-y).
-        let (q_y_coeffs_vec, r_y_coeffs_vec): (Vec<_>, Vec<_>) =  p_i_coeffs_iter
-            .into_par_iter()
-            .map(|coeffs| {
-                let (q_i_y, r_i) = _div_uni_coeffs_by_ruffini(&coeffs, y);
-                (q_i_y, r_i)
-            })
-            .unzip();
-
-        // // let mut q_y_coeffs_vec = vec![Self::Field::zero(); x_len * y_len];      
-        // // let mut r_y_coeffs_vec = vec![Self::Field::zero(); x_len];
-        // for i in 0..(x_deg + 1) as usize {
-        //     let (q_i_y, r_i) = uni_polys_iter[i].div_uni_by_ruffini(y);
-        //     let mut q_i_y_coeffs_vec = vec![Self::Field::zero(); y_len];
-        //     let q_i_y_coeffs = HostSlice::from_mut_slice(&mut q_i_y_coeffs_vec);
-        //     q_i_y.copy_coeffs(0, q_i_y_coeffs);
-        //     q_y_coeffs_vec[i * y_len..(i+1)*y_len].copy_from_slice(&q_i_y_coeffs_vec);
-        //     r_y_coeffs_vec[i] = r_i
-        // }   
-
-        // Flatten q_y_coeffs_vec
-        let q_y_coeffs_vec_flat: Vec<_> = q_y_coeffs_vec.into_par_iter().flatten().collect();
-        let q_y_coeff_transpose = HostSlice::from_slice(&q_y_coeffs_vec_flat);
-        let mut q_y_coeffs = DeviceVec::<Self::Field>::device_malloc(x_len * y_len).unwrap();
+        // Step 2: Create a program for Ruffini division
+        // 루피니 나눗셈을 수행하는 프로그램 생성
+        let ruffini_div_program = FieldProgram::new(
+            |vars: &mut Vec<FieldSymbol>| {
+                // 계수와 나누는 값을 가져옴
+                let divisor = vars[0];  // 나누는 값 (x 또는 y)
+                let coeff = vars[1];    // 현재 계수
+                let prev_result = vars[2]; // 이전 결과
+                
+                // 새 결과 = 현재 계수 + 이전 결과 * 나누는 값
+                vars[3] = coeff + prev_result * divisor;
+            },
+            4
+        ).unwrap();
+        
         let vec_ops_cfg = VecOpsConfig::default();
-        ScalarCfg::transpose(q_y_coeff_transpose, x_len as u32, y_len as u32, &mut q_y_coeffs, &vec_ops_cfg).unwrap();
-
-        let q_y = DensePolynomialExtEP::from_coeffs(&q_y_coeffs, x_len, y_len);
-
-        // Divide R_Y(X) by (X-x).
-        let (q_x_coeffs_vec, r_x) = _div_uni_coeffs_by_ruffini(&r_y_coeffs_vec, x);
-        let q_x = DensePolynomialExtEP::from_coeffs(HostSlice::from_slice(&q_x_coeffs_vec), x_len, 1);
+        
+        // 각 X 차수에 대해 Y에 대한 루피니 나눗셈 수행
+        let mut q_y_coeffs_vec = Vec::with_capacity(x_len);
+        let mut r_y_coeffs_vec = Vec::with_capacity(x_len);
+        
+        for poly_coeffs in &p_i_coeffs_iter {
+            let poly_degree = poly_coeffs.len() - 1;
+            let mut quotient = vec![Self::Field::zero(); poly_degree];
+            
+            // 최고차항은 그대로 몫의 최고차항이 됨
+            let mut remainder = poly_coeffs[poly_degree];
+            if poly_degree > 0 {
+                quotient[poly_degree - 1] = remainder;
+            }
+            
+            // 나머지 항들에 대해 루피니 나눗셈 수행
+            for i in (0..poly_degree).rev() {
+                let mut result = Self::Field::zero();
+                
+                // Create longer-lived bindings for the slices
+                let current_coeff = [poly_coeffs[i]];
+                let divisor = [y];
+                let prev_result = [remainder];
+                
+                // 프로그램 파라미터 설정
+                let mut result_array = [result];
+                let mut parameters = vec![
+                    HostSlice::from_slice(&divisor),          // 나누는 값
+                    HostSlice::from_slice(&current_coeff),    // 현재 계수
+                    HostSlice::from_slice(&prev_result),      // 이전 결과
+                    HostSlice::from_mut_slice(&mut result_array)  // 새 결과를 저장할 위치
+                ];
+                
+                // execute_program 실행
+                execute_program(&mut parameters, &ruffini_div_program, &vec_ops_cfg).unwrap();
+                
+                // 결과 저장
+                remainder = result;
+                if i > 0 {
+                    quotient[i - 1] = remainder;
+                }
+            }
+            
+            q_y_coeffs_vec.push(quotient);
+            r_y_coeffs_vec.push(remainder);
+        }
+        
+        // 다음 2의 거듭제곱 크기 계산
+        let next_pow2_y = (y_len - 1).next_power_of_two();
+        
+        // Flatten q_y_coeffs_vec 및 패딩 적용
+        let mut q_y_coeffs_vec_flat = Vec::with_capacity(x_len * next_pow2_y);
+        for q_y_coeff in q_y_coeffs_vec {
+            let mut padded = q_y_coeff;
+            padded.resize(next_pow2_y, Self::Field::zero());
+            q_y_coeffs_vec_flat.extend(padded);
+        }
+        
+        let q_y_coeff_transpose = HostSlice::from_slice(&q_y_coeffs_vec_flat);
+        let mut q_y_coeffs = DeviceVec::<Self::Field>::device_malloc(x_len * next_pow2_y).unwrap();
+        
+        // 전치 연산 수행
+        ScalarCfg::transpose(
+            q_y_coeff_transpose, 
+            x_len as u32, 
+            next_pow2_y as u32, 
+            &mut q_y_coeffs, 
+            &vec_ops_cfg
+        ).unwrap();
+        
+        // Q_Y 다항식 생성 - 2의 거듭제곱 크기 사용
+        let q_y = DensePolynomialExtEP::from_coeffs(&q_y_coeffs, x_len, next_pow2_y);
+        
+        // R_Y(X)를 (X-x)로 나누기
+        let r_y_degree = r_y_coeffs_vec.len() - 1;
+        let mut q_x_coeffs = vec![Self::Field::zero(); r_y_degree];
+        
+        // 최고차항은 그대로 몫의 최고차항이 됨
+        let mut r_x = r_y_coeffs_vec[r_y_degree];
+        if r_y_degree > 0 {
+            q_x_coeffs[r_y_degree - 1] = r_x;
+        }
+        
+        // 나머지 항들에 대해 루피니 나눗셈 수행 - execute_program 사용
+        for i in (0..r_y_degree).rev() {
+            let mut result = Self::Field::zero();
+            
+            // 프로그램 파라미터 설정
+            let current_coeff = [r_y_coeffs_vec[i]];
+            let divisor = [x];
+            let prev_result = [r_x];
+            let mut result_slice = [result];
+            let mut parameters = vec![
+                HostSlice::from_slice(&divisor),        // 나누는 값
+                HostSlice::from_slice(&current_coeff),  // 현재 계수
+                HostSlice::from_slice(&prev_result),    // 이전 결과
+                HostSlice::from_mut_slice(&mut result_slice)// 새 결과를 저장할 위치
+            ];
+            
+            // execute_program 실행
+            execute_program(&mut parameters, &ruffini_div_program, &vec_ops_cfg).unwrap();
+            
+            // 결과 저장
+            r_x = result;
+            if i > 0 {
+                q_x_coeffs[i - 1] = r_x;
+            }
+        }
+        
+        // X 방향 다음 2의 거듭제곱 크기 계산
+        let next_pow2_x = (x_len - 1).next_power_of_two();
+        
+        // 필요한 경우 패딩
+        let mut padded_q_x = q_x_coeffs;
+        padded_q_x.resize(next_pow2_x, Self::Field::zero());
+        
+        // Q_X 다항식 생성 - 2의 거듭제곱 크기 사용
+        let q_x = DensePolynomialExtEP::from_coeffs(HostSlice::from_slice(&padded_q_x), next_pow2_x, 1);
+        
         (q_x, q_y, r_x)
     }
 
