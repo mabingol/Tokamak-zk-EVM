@@ -8,9 +8,14 @@ use std::cmp;
 
 #[cfg(test)]
 mod tests {
+    use ark_bls12_381::Bls12_381;
+    use ark_ec::pairing::Pairing;
+    use icicle_bls12_381::curve::{CurveCfg, G2CurveCfg};
+    use icicle_core::curve::Curve;
     use icicle_core::ntt;
 
     use super::*;
+    use crate::conversion::Conversion;
     use crate::vector_operations::{*};
     use crate::bivariate_polynomial::{DensePolynomialExt, BivariatePolynomial};
 
@@ -327,6 +332,25 @@ mod tests {
         // Size should be 2x2 (or the next power of 2 that can contain 2x2)
         assert!(poly.x_size <= 2);
         assert!(poly.y_size <= 2);
+    }
+
+    #[test]
+    fn test_ark_pairing() {
+        let size = 2usize.pow(6);
+        let g1_point = CurveCfg::generate_random_affine_points(size)[0];
+        let g2_point = G2CurveCfg::generate_random_affine_points(size)[0];
+
+        let ark_g1_point = Conversion::icicle_g1_affine_to_ark(&g1_point);
+        let ark_g2_point = Conversion::icicle_g2_affine_to_ark(&g2_point);
+        println!("ark_g1_point: {:?}", ark_g1_point);
+        println!("ark_g2_point: {:?}", ark_g2_point);
+        let pairing_result = Bls12_381::pairing(ark_g1_point, ark_g2_point);
+        // println!("pairing_result: {:?}", pairing_result);
+        if Conversion::verify_bilinearity(ark_g1_point, ark_g2_point) {
+            println!("Bilinearity verified: e(2*G1, G2) == e(G1, G2)^2");
+        } else {
+            println!("Bilinearity check failed!");
+        }
     }
 
     #[test]

@@ -1,18 +1,9 @@
-<<<<<<< HEAD
 use icicle_bls12_381::curve::{BaseField, G1Affine, G1Projective, G2Affine, G2BaseField, ScalarCfg, ScalarField};
-use icicle_core::msm;
-use icicle_core::ntt;
+use icicle_core::{msm, ntt};
 use icicle_core::traits::{Arithmetic, FieldImpl, GenerateRandom};
 use icicle_core::vec_ops::{VecOps, VecOpsConfig};
 use icicle_runtime::stream::IcicleStream;
-use crate::group_structures::Sigma;
-=======
-use icicle_bls12_381::curve::{ScalarField, ScalarCfg, G1Affine, G2Affine, BaseField, G2BaseField};
-use icicle_core::ntt;
-use icicle_core::traits::{Arithmetic, FieldImpl, GenerateRandom};
-use icicle_core::vec_ops::{VecOps, VecOpsConfig};
 use crate::group_structures::{Sigma, Sigma1, Sigma2};
->>>>>>> origin/jake
 use crate::bivariate_polynomial::{BivariatePolynomial, DensePolynomialExt};
 use crate::vector_operations::transpose_inplace;
 
@@ -31,8 +22,6 @@ use serde_json::{from_reader, to_writer_pretty};
 
 const QAP_COMPILER_PATH_PREFIX: &str = "../frontend/qap-compiler/subcircuits/library";
 const SYNTHESIZER_PATH_PREFIX: &str = "../frontend/synthesizer/examples/outputs";
-<<<<<<< HEAD
-=======
 
 fn g1_vec_to_code(v: &Box<[G1serde]>) -> String {
     let inner = v.iter()
@@ -56,7 +45,6 @@ fn byte_slice_to_literal(bytes: &[u8]) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
->>>>>>> origin/jake
 
 #[derive(Debug, Deserialize)]
 pub struct SetupParams {
@@ -78,31 +66,6 @@ impl SetupParams {
     }
 }
 
-<<<<<<< HEAD
-// impl Sigma {
-//     // Write full CRS from JSON
-//     pub fn read_from_json(path: &str) -> io::Result<Self> {
-//         let abs_path = env::current_dir()?.join(path);
-//         let file = File::open(abs_path)?;
-//         let reader = BufReader::new(file);
-//         let sigma: Self = from_reader(reader)?;
-//         Ok(sigma)
-//     }
-    
-//     /// Write full CRS into JSON
-//     pub fn write_into_json(&self, path: &str) -> io::Result<()> {
-//         let abs_path = env::current_dir()?.join(path);
-//         if let Some(parent) = abs_path.parent() {
-//             fs::create_dir_all(parent)?;
-//         }
-//         let file = File::create(&abs_path)?;
-//         let writer = BufWriter::new(file);
-//         to_writer_pretty(writer, self)?;
-//         println!("Sigma has been saved at {:?}", abs_path);
-//         Ok(())
-//     }
-// }
-=======
 impl Sigma {
     /// Write full CRS from JSON
     pub fn read_from_json(path: &str) -> io::Result<Self> {
@@ -214,7 +177,6 @@ impl Sigma2 {
         )
     }
 }
->>>>>>> origin/jake
 
 #[derive(Debug, Deserialize)]
 pub struct PlacementVariables {
@@ -579,7 +541,6 @@ pub fn scaled_outer_product_1d(
     );
 }
 
-<<<<<<< HEAD
 pub fn scaled_outer_product_1d_ep(
     col_vec: &Box<[ScalarField]>, 
     row_vec: &Box<[ScalarField]>, 
@@ -602,8 +563,6 @@ pub fn scaled_outer_product_1d_ep(
     );
 }
 
-=======
->>>>>>> origin/jake
 pub fn from_coef_vec_to_g1serde_vec(coef: &Box<[ScalarField]>, gen: &G1Affine, res: &mut Box<[G1serde]>) {
     use std::sync::atomic::{AtomicU32, Ordering};
     use rayon::prelude::*;

@@ -5,7 +5,7 @@ use icicle_core::polynomials::UnivariatePolynomial;
 use icicle_core::traits::FieldImpl;
 use icicle_core::vec_ops::{VecOpsConfig, VecOps};
 use icicle_runtime::memory::{DeviceVec, HostSlice};
-use libs::polynomials::{BivariatePolynomial, DensePolynomialExt};
+use libs::bivariate_polynomial::{BivariatePolynomial, DensePolynomialExt};
 use libs::polynomials_ep::{BivariatePolynomialEP, DensePolynomialExtEP};
 use icicle_core::traits::GenerateRandom;
 
@@ -917,60 +917,60 @@ fn bench_to_rou_evals(c: &mut Criterion) {
 use std::time::Duration;
 
 
-// 원본 구현과 execute_program 구현 비교 벤치마크
-fn benchmark_compare_implementations(c: &mut Criterion) {
-    let sizes = vec![(8, 8), (16, 16), (32, 32)];
+// // 원본 구현과 execute_program 구현 비교 벤치마크
+// fn benchmark_compare_implementations(c: &mut Criterion) {
+//     let sizes = vec![(8, 8), (16, 16), (32, 32)];
     
-    let mut group = c.benchmark_group("div_by_ruffini_implementation_comparison");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(10);
+//     let mut group = c.benchmark_group("div_by_ruffini_implementation_comparison");
+//     group.measurement_time(Duration::from_secs(10));
+//     group.sample_size(10);
     
-    for (x_size, y_size) in sizes {
-        // 테스트용 다항식 생성
-        let coeffs = ScalarCfg::generate_random(x_size * y_size);
+//     for (x_size, y_size) in sizes {
+//         // 테스트용 다항식 생성
+//         let coeffs = ScalarCfg::generate_random(x_size * y_size);
         
-        // 원본 구현용 다항식
-        let poly_original = DensePolynomialExt::from_coeffs(
-            HostSlice::from_slice(&coeffs),
-            x_size,
-            y_size,
-        );
+//         // 원본 구현용 다항식
+//         let poly_original = DensePolynomialExt::from_coeffs(
+//             HostSlice::from_slice(&coeffs),
+//             x_size,
+//             y_size,
+//         );
         
-        // execute_program 구현용 다항식
-        let poly_ep = DensePolynomialExtEP::from_coeffs(
-            HostSlice::from_slice(&coeffs),
-            x_size,
-            y_size,
-        );
+//         // execute_program 구현용 다항식
+//         let poly_ep = DensePolynomialExtEP::from_coeffs(
+//             HostSlice::from_slice(&coeffs),
+//             x_size,
+//             y_size,
+//         );
         
-        let x = ScalarCfg::generate_random(1)[0];
-        let y = ScalarCfg::generate_random(1)[0];
+//         let x = ScalarCfg::generate_random(1)[0];
+//         let y = ScalarCfg::generate_random(1)[0];
         
-        // 원본 구현 벤치마크
-        group.bench_with_input(
-            BenchmarkId::new(format!("original_{}x{}", x_size, y_size), ""),
-            &(x_size, y_size),
-            |b, _| {
-                b.iter(|| {
-                    black_box(poly_original.div_by_ruffini(black_box(x), black_box(y)))
-                });
-            },
-        );
+//         // 원본 구현 벤치마크
+//         group.bench_with_input(
+//             BenchmarkId::new(format!("original_{}x{}", x_size, y_size), ""),
+//             &(x_size, y_size),
+//             |b, _| {
+//                 b.iter(|| {
+//                     black_box(poly_original.div_by_ruffini(black_box(x), black_box(y)))
+//                 });
+//             },
+//         );
         
-        // execute_program 구현 벤치마크
-        group.bench_with_input(
-            BenchmarkId::new(format!("execute_program_{}x{}", x_size, y_size), ""),
-            &(x_size, y_size),
-            |b, _| {
-                b.iter(|| {
-                    black_box(poly_ep.div_by_ruffini(black_box(x), black_box(y)))
-                });
-            },
-        );
-    }
+//         // execute_program 구현 벤치마크
+//         group.bench_with_input(
+//             BenchmarkId::new(format!("execute_program_{}x{}", x_size, y_size), ""),
+//             &(x_size, y_size),
+//             |b, _| {
+//                 b.iter(|| {
+//                     black_box(poly_ep.div_by_ruffini(black_box(x), black_box(y)))
+//                 });
+//             },
+//         );
+//     }
     
-    group.finish();
-}
+//     group.finish();
+// }
 
 // 실행 시간에 따른 스케일링 분석 벤치마크
 fn benchmark_scaling(c: &mut Criterion) {

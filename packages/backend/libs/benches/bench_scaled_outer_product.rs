@@ -11,7 +11,7 @@ use libs::iotools::{           // 실제 크레이트 이름으로 바꿔주세�
 
 fn bench_scaled_outer(c: &mut Criterion) {
   let mut group = c.benchmark_group("scaled_outer_product_1d");
-  for &n in &[256usize, 512, 1024] {
+  for &n in &[128, 256usize, 512, 1024] {
       // ─── 벡터 길이 ───
       let L = n;
       let M = n;

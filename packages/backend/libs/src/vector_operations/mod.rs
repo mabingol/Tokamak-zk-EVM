@@ -326,7 +326,7 @@ pub fn scaled_outer_product_ep(
     } else {
         scaled_vec.clone_from(col_vec);
     }
-    outer_product_two_vecs_ep(
+    outer_product_two_vecs(
         &scaled_vec, 
         row_vec, 
         res

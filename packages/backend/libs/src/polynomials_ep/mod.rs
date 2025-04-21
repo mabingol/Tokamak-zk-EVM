@@ -18,7 +18,7 @@ use std::{
 use super::vector_operations::{*};
 use rayon::prelude::*;
 
-use crate::polynomials::{BivariatePolynomial, DensePolynomialExt};
+// use crate::polynomials::{BivariatePolynomial, DensePolynomialExt};
 
 fn _find_size_as_twopower(target_x_size: usize, target_y_size: usize) -> (usize, usize) {
     // Problem: find min{m: x_size*2^m >= target_x_size} and min{n: y_size*2^n >= target_y_size}
@@ -1280,7 +1280,7 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
             // let acc_block_poly = DensePolynomialExt::from_coeffs(HostSlice::from_slice(&scaled_acc_block_vec), c, d);
             
             let scaled_acc_block = HostSlice::from_slice(&scaled_acc_block_vec);
-            let acc_block_poly = DensePolynomialExt::from_coeffs(scaled_acc_block, c, d);
+            let acc_block_poly = DensePolynomialExtEP::from_coeffs(scaled_acc_block, c, d);
             let mut acc_block_eval = DeviceVec::<Self::Field>::device_malloc(c * d).unwrap();
             acc_block_poly.to_rou_evals(None, Some(&xi), &mut acc_block_eval);
             
@@ -1366,7 +1366,7 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
             }
             
             let scaled_acc_block = HostSlice::from_slice(&scaled_acc_block_vec);
-            let acc_block_poly = DensePolynomialExt::from_coeffs(scaled_acc_block, c, n*d);
+            let acc_block_poly = DensePolynomialExtEP::from_coeffs(scaled_acc_block, c, n*d);
             
             // Computing B_tilde (eval of B' on coset-X and rou-Y)
             let mut acc_block_eval = DeviceVec::device_malloc(c * (n*d)).unwrap();
@@ -1403,7 +1403,7 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
             quo_x_eval_device.copy_from_host(&HostSlice::from_slice(&quo_x_eval_vec)).unwrap();
             
             // Computing Q_Y (quo_x)
-            let quo_x_ext = DensePolynomialExt::from_rou_evals(&quo_x_eval_device, c, n*d, Some(&zeta), None);
+            let quo_x_ext = DensePolynomialExtEP::from_rou_evals(&quo_x_eval_device, c, n*d, Some(&zeta), None);
             let quo_x = DensePolynomialExtEP {
                 poly: quo_x_ext.poly,
                 x_degree: (c - 1) as i64,
