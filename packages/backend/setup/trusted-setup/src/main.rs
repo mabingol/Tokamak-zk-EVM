@@ -1,158 +1,233 @@
-use libs::tools::{Tau, SetupParams, SubcircuitInfo, MixedSubcircuitQAPEvaled};
-use libs::tools::{read_json_as_boxed_boxed_numbers, gen_cached_pows};
-// use libs::math::{DensePolynomialExt, BivariatePolynomial};
-use libs::group_structures::SigmaArithAndIP;
-
-use icicle_bls12_381::curve::{ScalarField as Field, ScalarCfg, G1Affine, G2Affine, CurveCfg};
-// use icicle_bls12_381::vec_ops;
-use icicle_core::traits::{Arithmetic, FieldConfig, FieldImpl, GenerateRandom};
-// use icicle_core::polynomials::UnivariatePolynomial;
+#![allow(non_snake_case)]
+use icicle_runtime::stream::IcicleStream;
+use libs::iotools::{SetupParams, SubcircuitInfo, SubcircuitR1CS};
+use libs::field_structures::{Tau, from_r1cs_to_evaled_qap_mixture};
+use libs::iotools::{read_global_wire_list_as_boxed_boxed_numbers};
+use libs::vector_operations::gen_evaled_lagrange_bases;
+use libs::group_structures::{Sigma1, Sigma};
+use icicle_bls12_381::curve::{ScalarField as Field, CurveCfg, G2CurveCfg};
+use icicle_core::traits::{Arithmetic, FieldImpl};
 use icicle_core::ntt;
-// use icicle_core::vec_ops::{VecOps, VecOpsConfig};
 use icicle_core::curve::Curve;
-// use icicle_bls12_381::polynomials::DensePolynomial;
-// use icicle_runtime::memory::{HostOrDeviceSlice, HostSlice, DeviceSlice, DeviceVec};
-// use icicle_runtime::Device;
-// use std::collections::HashSet;
-// use std::ops::Deref;
-use std::vec;
-// use std::{
-//     clone, cmp,
-//     ops::{Add, AddAssign, Div, Mul, Rem, Sub, Neg},
-//     ptr, slice,
-// };
+
+use std::{vec, cmp};
 use std::time::Instant;
-use libs::s_max;
+use std::fs::File;
+use std::io::Write;
 
 fn main() {
-    let g1_gen = CurveCfg::generate_random_affine_points(1)[0];
+    let start1 = Instant::now();
     
+    // Generate random affine points on the elliptic curve (G1 and G2)
+    println!("Generating random generator points...");
+    let g1_gen = CurveCfg::generate_random_affine_points(1)[0];
+    let g2_gen = G2CurveCfg::generate_random_affine_points(1)[0];
+    
+    // Generate a random secret parameter tau (x and y only, no z as per the paper)
+    println!("Generating random tau parameter...");
     let tau = Tau::gen();
     
-    let mut path: &str = "";
-    path = "setup/trusted-setup/inputs/setupParams.json";
-    let setup_params = SetupParams::from_path(path).unwrap();
-    // println!("{:?}", setup_params);
-    let m_d = setup_params.m_D;
-    let s_d = setup_params.s_D;
-    let n = setup_params.n;
-    if !setup_params.n.is_power_of_two() {
-        panic!{"n is not a power of two."}
-    }
-    let l = setup_params.l;
-    let l_d = setup_params.l_D;
-    if l%2 == 1 {
-        panic!{"l is not even."}
-    }
-    let l_in = l/2;
-    if !s_max.is_power_of_two() {
-        panic!{"s_max is not a power of two."}
-    }
-    let z_dom_length = l_d-l;
-    if !z_dom_length.is_power_of_two() {
-        panic!{"l_D - l is not a pwer of two."}
+    // Load setup parameters from JSON file
+    println!("Loading setup parameters...");
+    let setup_file_name = "setupParams.json";
+    let setup_params = SetupParams::from_path(setup_file_name).unwrap();
+
+    // Extract key parameters from setup_params
+    let m_d = setup_params.m_D; // Total number of wires
+    let s_d = setup_params.s_D; // Number of subcircuits
+    let n = setup_params.n;     // Number of constraints per subcircuit
+    let s_max = setup_params.s_max; // The maximum number of placements.
+    
+    // Verify n is a power of two
+    if !n.is_power_of_two() {
+        panic!("n is not a power of two.");
     }
     
-    path = "setup/trusted-setup/inputs/subcircuitInfo.json";
-    let subcircuit_infos = SubcircuitInfo::from_path(path).unwrap();
-    // for subcircuit in subcircuit_infos.iter() {
-    //     println!("{:?}", subcircuit);
-    // }
+    // Additional wire-related parameters
+    let l = setup_params.l;     // Number of public I/O wires
+    let l_d = setup_params.l_D; // Number of interface wires
+    
+    if !(l.is_power_of_two() || l==0) {
+        panic!("l is not a power of two.");
+    }
+    // let l_in = l / 2;  // Number of input wires
 
-    path = "setup/trusted-setup/inputs/globalWireList.json";
-    let globalWireList = read_json_as_boxed_boxed_numbers(path).unwrap();
-    // println!("{:?}", globalWireList);
-    // path = "setup/trusted-setup/inputs/json/subcircuit0.json";
-    // match Constraints::from_path(path) {
-    //     Ok(mut data) => {
-    //         Constraints::convert_values_to_hex(&mut data); // ✅ value를 hex로 변환
-    //         println!("JSON 파일을 성공적으로 읽고 변환했습니다:");
-    //         for (i, constraint_group) in data.constraints.iter().enumerate() {
-    //             println!("Constraint Group {}:", i);
-    //             for (j, hashmap) in constraint_group.iter().enumerate() {
-    //                 println!("  Element {}: {:?}", j, hashmap);
-    //             }
-    //         }
-    //     }
-    //     Err(e) => eprintln!("JSON 파일을 읽는 중 오류가 발생했습니다: {}", e),
-    // }
+    // Verify s_max is a power of two
+    if !s_max.is_power_of_two() {
+        panic!("s_max is not a power of two.");
+    }
+    
+    // The last wire-related parameter
+    let m_i = l_d - l;
+    
+    // Verify m_I is a power of two
+    if !m_i.is_power_of_two() {
+        panic!("m_I is not a power of two.");
+    }
+    
+    // Load subcircuit information
+    println!("Loading subcircuit information...");
+    let subcircuit_file_name = "subcircuitInfo.json";
+    let subcircuit_infos = SubcircuitInfo::from_path(subcircuit_file_name).unwrap();
 
+    // Load global wire list
+    println!("Loading global wire list...");
+    let global_wire_file_name = "globalWireList.json";
+    let global_wire_list = read_global_wire_list_as_boxed_boxed_numbers(global_wire_file_name).unwrap();
+    
+    // ------------------- Generate Polynomial Evaluations -------------------
     let start = Instant::now();
-    // Building o_i(x) for i in [0..m_D-1]
+    println!("Generating polynomial evaluations...");
+
+    // Compute k_evaled_vec: Lagrange polynomial evaluations at τ.x of size m_I
+    println!("Computing Lagrange polynomial evaluations (k_evaled_vec)...");
+    let mut k_evaled_vec = vec![Field::zero(); m_i].into_boxed_slice();
+    gen_evaled_lagrange_bases(&tau.x, m_i, &mut k_evaled_vec);
+
+    // Compute l_evaled_vec: Lagrange polynomial evaluations at τ.y of size s_max
+    println!("Computing Lagrange polynomial evaluations (l_evaled_vec)...");
+    let mut l_evaled_vec = vec![Field::zero(); s_max].into_boxed_slice();
+    gen_evaled_lagrange_bases(&tau.y, s_max, &mut l_evaled_vec);
+    
+    // Compute m_evaled_vec: Lagrange polynomial evaluations at τ.x of size l
+    println!("Computing Lagrange polynomial evaluations (m_evaled_vec)...");
+    let mut m_evaled_vec = vec![Field::zero(); l].into_boxed_slice();
+    if l>0 {
+        gen_evaled_lagrange_bases(&tau.x, l, &mut m_evaled_vec);
+    }
+
+    // Compute o_evaled_vec: Wire polynomial evaluations
+    println!("Computing wire polynomial evaluations (o_evaled_vec)...");
     let mut o_evaled_vec = vec![Field::zero(); m_d].into_boxed_slice();
-    let mut nonzero_wires = Vec::<usize>::new();
+
     {
-        let mut cached_x_pows_vec = vec![Field::zero(); setup_params.n].into_boxed_slice();
-        gen_cached_pows(&tau.x, setup_params.n, &mut cached_x_pows_vec);
-        // Todo: Cached 방법과 보통 방법 시간 재보기
+        // Generate cached powers of τ.x for more efficient computation
+        let mut x_evaled_lagrange_vec = vec![Field::zero(); n].into_boxed_slice();
+        gen_evaled_lagrange_bases(&tau.x, n, &mut x_evaled_lagrange_vec);
+        // Process each subcircuit
         for i in 0..s_d {
-        // for i in [3] {
-            println!("Processing subcircuit id {:?}", i);
-            let _path = format!("setup/trusted-setup/inputs/json/subcircuit{i}.json");
-            let evaled_qap = MixedSubcircuitQAPEvaled::from_r1cs_to_evaled_qap(
-                &_path,
+            println!("Processing subcircuit id {}", i);
+            let r1cs_path: String = format!("json/subcircuit{i}.json");
+
+            // Evaluate QAP for the current subcircuit
+            let compact_r1cs = SubcircuitR1CS::from_path(&r1cs_path, &setup_params, &subcircuit_infos[i]).unwrap();
+            let o_evaled = from_r1cs_to_evaled_qap_mixture(
+                &compact_r1cs,
                 &setup_params,
                 &subcircuit_infos[i],
                 &tau,
-                &cached_x_pows_vec,
+                &x_evaled_lagrange_vec
             );
+            
+            // Map local wire indices to global wire indices
             let flatten_map = &subcircuit_infos[i].flattenMap;
-            for (j, local_idx) in evaled_qap.active_wires.iter().enumerate(){
-                let global_idx = flatten_map[*local_idx];
-                if (globalWireList[global_idx][0] != subcircuit_infos[i].id) || (globalWireList[global_idx][1] != *local_idx) {
-                    // println!("global[i]: {:?}", globalWireList[global_idx]);
-                    // println!("(sub_id, local[i]): ({:?},{:?})", subcircuit_infos[i].id, *local_idx);
-                    panic!("GlobalWireList is not the inverse of flatten_maps.")
+
+            // Store evaluations in o_evaled_vec using global wire indices
+            for local_idx in 0..subcircuit_infos[i].Nwires {
+                let global_idx = flatten_map[local_idx];
+
+                // Verify global wire list consistency with flatten map
+                if (global_wire_list[global_idx][0] != subcircuit_infos[i].id) || 
+                   (global_wire_list[global_idx][1] != local_idx) {
+                    panic!("GlobalWireList is not the inverse of flattenMap.");
                 }
-                let wire_val = evaled_qap.o_evals[j];
-                if !wire_val.eq(&Field::zero()){
-                    nonzero_wires.push(global_idx);
+
+                let wire_val = o_evaled[local_idx];
+
+                // Record non-zero wire evaluations
+                if !wire_val.eq(&Field::zero()) {
+                    // nonzero_wires.push(global_idx);
                     o_evaled_vec[global_idx] = wire_val;
                 }
             }
         }
     }
+    
+    let duration = start.elapsed();
+    println!("Polynomial evaluation computation time: {:.6} seconds", duration.as_secs_f64());
 
-    println!("Number of nonzero wires: {:?} out of {:?} total wires", nonzero_wires.len(), m_d);
-
-    // Building Lagranges L_i(y) for i in [0..s_max-1] and K_i(z) for i in [0..l_D-1]
-    let mut l_evaled_vec = vec![Field::zero(); s_max].into_boxed_slice();
-    gen_cached_pows(&tau.y, s_max, &mut l_evaled_vec);
-    let mut k_evaled_vec = vec![Field::zero(); z_dom_length].into_boxed_slice();
-    gen_cached_pows(&tau.z, z_dom_length, &mut k_evaled_vec);
-
-    //building M_i(x,z) for i in [l .. l_D]
-    let mut m_evaled_vec = vec![Field::zero(); z_dom_length].into_boxed_slice();
-    {
-        let omega = ntt::get_root_of_unity::<Field>(z_dom_length as u64);
-        let mut omega_pows_vec = vec![Field::zero(); l_d];
-        for i in 1..l_d { omega_pows_vec[i] = omega_pows_vec[i-1] * omega };
-        for i in 0..z_dom_length {
-            let j = i + l;
-            let mut m_eval = Field::zero();
-            for k in l .. l_d {
-                if j != k {
-                    let factor1 = o_evaled_vec[k] * Field::from_u32((l_d- l) as u32).inv();
-                    let factor2_term1 = omega_pows_vec[k] * k_evaled_vec[j-l];
-                    let factor2_term2 = omega_pows_vec[j] * k_evaled_vec[i];
-                    let factor2 = ( factor2_term1 + factor2_term2 ) * (omega_pows_vec[j] - omega_pows_vec[k]).inv();
-                    m_eval = m_eval + factor1 * factor2;
-                }
-            }
-            m_evaled_vec[i] = m_eval;
-        }
-    }
-    let duration = start.elapsed(); // 종료 후 경과 시간 계산
-    println!("Loading and eval time: {:.6} seconds", duration.as_secs_f64()); // 초 단위 출력
-
-    let sigma_ai = SigmaArithAndIP::gen(
+    // Generate sigma components using the computed polynomial evaluations
+    let start = Instant::now();
+    let sigma = Sigma::gen(
         &setup_params,
         &tau,
         &o_evaled_vec,
-        &m_evaled_vec,
-        &l_evaled_vec, 
+        &l_evaled_vec,
         &k_evaled_vec,
+        &m_evaled_vec,
         &g1_gen,
+        &g2_gen
     );
 
+    let lap = start.elapsed();
+    println!("The sigma generation time: {:.6} seconds", lap.as_secs_f64());
+
+    let start = Instant::now();
+    // Writing the sigma into JSON
+    println!("Writing the sigma into JSON...");
+    let output_path = "setup/trusted-setup/output/combined_sigma.json";
+    sigma.write_into_json(output_path).unwrap();
+    // // Writing the sigma into rust code
+    // println!("Writing the sigma into a rust code...");
+    // let output_path = "setup/trusted-setup/output/combined_sigma.rs";
+    // sigma.write_into_rust_code(output_path).unwrap();
+    let lap = start.elapsed();
+    println!("The sigma writing time: {:.6} seconds", lap.as_secs_f64());
+
+    let total_duration = start1.elapsed();
+    println!("Total setup time: {:.6} seconds", total_duration.as_secs_f64());
+    
+//     // ------------------- read JSON file -------------------
+//     println!("\n----- Testing reconstruction of the sigma from JSON -----");
+//     let read_start = Instant::now();
+    
+//     match Sigma::read_from_json(output_path) {
+//         Ok(loaded_sigma) => {
+//             let read_duration = read_start.elapsed();
+//             println!("Successfully loaded sigma from file in {:.6} seconds", read_duration.as_secs_f64());
+            
+//             println!("\nLoaded Sigma components summary:");
+//             println!("  - Sigma1:");
+//             println!("      * Sigma1: {} xy_powers elements", loaded_sigma.sigma_1.xy_powers.len());
+//             println!("      * gamma_inv_l_oj_mj: {} elements", loaded_sigma.sigma_1.gamma_inv_l_oj_mj.len());
+//             println!("      * eta_inv_li_ojl_ak_kj: {}x{} matrix", 
+//                     loaded_sigma.sigma_b.eta_inv_li_ojl_ak_kj.len(),
+//                     if loaded_sigma.sigma_b.eta_inv_li_ojl_ak_kj.len() > 0 { loaded_sigma.sigma_b.eta_inv_li_ojl_ak_kj[0].len() } else { 0 });
+//             println!("      * delta_inv_li_oj_prv: {}x{} matrix", 
+//                     loaded_sigma.sigma_b.delta_inv_li_oj_prv.len(),
+//                     if loaded_sigma.sigma_b.delta_inv_li_oj_prv.len() > 0 { loaded_sigma.sigma_b.delta_inv_li_oj_prv[0].len() } else { 0 });
+//             println!("      * delta_inv_ak_xh_tn: {} elements", loaded_sigma.sigma_b.delta_inv_ak_xh_tn.len());
+//             println!("      * delta_inv_ak_xi_tm: {} elements", loaded_sigma.sigma_b.delta_inv_ak_xi_tm.len());
+//             println!("      * delta_inv_ak_yi_ts: {} elements", loaded_sigma.sigma_b.delta_inv_ak_yi_ts.len());
+            
+//             // Check first few elements of each component to verify they are valid
+//             if loaded_sigma.sigma_ac.xy_powers.len() > 0 {
+//                 println!("\nSample values from SigmaAC:");
+//                 println!("  First xy_power x: {}", loaded_sigma.sigma_ac.xy_powers[0].x);
+//                 println!("  First xy_power y: {}", loaded_sigma.sigma_ac.xy_powers[0].y);
+//             }
+            
+//             println!("\nSample values from SigmaB:");
+//             println!("  delta x: {}", loaded_sigma.sigma_b.delta.x);
+//             println!("  delta y: {}", loaded_sigma.sigma_b.delta.y);
+//             println!("  eta x: {}", loaded_sigma.sigma_b.eta.x);
+//             println!("  eta y: {}", loaded_sigma.sigma_b.eta.y);
+            
+//             println!("\nSample values from SigmaV:");
+//             println!("  alpha x: {}", loaded_sigma.sigma_v.alpha.x);
+//             println!("  alpha y: {}", loaded_sigma.sigma_v.alpha.y);
+//             println!("  gamma x: {}", loaded_sigma.sigma_v.gamma.x);
+//             println!("  gamma y: {}", loaded_sigma.sigma_v.gamma.y);
+            
+//             println!("\nJSON deserialization test completed successfully!");
+//         },
+//         Err(e) => {
+//             println!("Error loading sigma from file: {}", e);
+//         }
+//     }
+    
+//     if let Ok(metadata) = std::fs::metadata(output_path) {
+//         let file_size = metadata.len();
+//         println!("\nJSON file size: {} bytes ({:.2} MB)", file_size, file_size as f64 / (1024.0 * 1024.0));
+//     }
 }

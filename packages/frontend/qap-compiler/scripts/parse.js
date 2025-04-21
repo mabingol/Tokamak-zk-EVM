@@ -270,6 +270,7 @@ fs.readFile('./temp.txt', 'utf8', function(err, data) {
   while (n < _n) {
       n <<= 1
   }
+
   const setupParams = {
     l: globalWireInfo.l,
     l_D: globalWireInfo.l_D,
