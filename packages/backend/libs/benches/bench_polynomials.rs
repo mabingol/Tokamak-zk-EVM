@@ -9,7 +9,7 @@ use libs::polynomials::{BivariatePolynomial, DensePolynomialExt};
 use libs::polynomials_ep::{BivariatePolynomialEP, DensePolynomialExtEP};
 use icicle_core::traits::GenerateRandom;
 
-fn create_test_polynomial(x_size: usize, y_size: usize, num_nonzero: usize) -> DensePolynomial {
+fn create_test_polynomial(x_size: usize, y_size: usize, num_nonzero: usize) -> DensePolynomialExt {
     let mut coeffs = vec![ScalarField::zero(); x_size * y_size];
     
     // Add non-zero coefficients
@@ -19,7 +19,7 @@ fn create_test_polynomial(x_size: usize, y_size: usize, num_nonzero: usize) -> D
         coeffs[x + y * x_size] = ScalarField::one();
     }
     
-    DensePolynomial::from_coeffs(HostSlice::from_slice(&coeffs), x_size * y_size)
+    DensePolynomialExt::from_coeffs(HostSlice::from_slice(&coeffs), x_size, y_size)
 }
 
 // 랜덤 평가값을 생성하는 함수
@@ -29,63 +29,86 @@ fn create_random_evals(size: usize) -> Vec<ScalarField> {
     evals
 }
 
-fn bench_find_degree(c: &mut Criterion) {
-    // Small polynomial benchmark
+fn bench_update_degree(c: &mut Criterion) {
+    // 1) small
     let small_x = 64;
     let small_y = 128;
-    let small_poly = create_test_polynomial(small_x, small_y, 1);
-    
-    let mut group = c.benchmark_group("find_degree_small");
+    let small_poly: DensePolynomialExt = create_test_polynomial(small_x, small_y, 1);
+    // 계수 복사를 위한 HostSlice 준비
+    let mut small_coeffs = vec![ScalarField::zero(); small_x * small_y];
+    let mut small_host = HostSlice::from_mut_slice(&mut small_coeffs);
+    small_poly.copy_coeffs(0, small_host);
+
+    let mut group = c.benchmark_group("update_degree_small");
     group.bench_function("original", |b| {
-        b.iter(|| DensePolynomialExt::find_degree(black_box(&small_poly), black_box(small_x), black_box(small_y)))
+        b.iter(|| {
+            // 매 반복마다 clone 해서 update_degree 호출
+            let mut poly = small_poly.clone();
+            poly.update_degree();
+        })
     });
-    
     group.bench_function("execute_program", |b| {
-        b.iter(|| DensePolynomialExtEP::find_degree(black_box(&small_poly), black_box(small_x), black_box(small_y)))
+        b.iter(|| {
+            // 매 반복마다 EP 버전 인스턴스 생성해서 update_degree 호출
+            let mut ep = DensePolynomialExtEP::from_coeffs(
+                black_box(small_host), black_box(small_x), black_box(small_y)
+            );
+            ep.update_degree();
+        })
     });
     group.finish();
-    
-    // Reversed dimensions benchmark
-    let mut group = c.benchmark_group("find_degree_reversed_dims");
-    group.bench_function("original", |b| {
-        b.iter(|| DensePolynomialExt::find_degree(black_box(&small_poly), black_box(small_y), black_box(small_x)))
-    });
-    
-    group.bench_function("execute_program", |b| {
-        b.iter(|| DensePolynomialExtEP::find_degree(black_box(&small_poly), black_box(small_y), black_box(small_x)))
-    });
-    group.finish();
-    
-    // Large polynomial benchmark
+
+    // 2) large
     let large_x = 256;
     let large_y = 256;
-    let large_poly = create_test_polynomial(large_x, large_y, 50);
-    
-    let mut group = c.benchmark_group("find_degree_large");
+    let large_poly: DensePolynomialExt = create_test_polynomial(large_x, large_y, 1);
+    let mut large_coeffs = vec![ScalarField::zero(); large_x * large_y];
+    let mut large_host = HostSlice::from_mut_slice(&mut large_coeffs);
+    large_poly.copy_coeffs(0, large_host);
+
+    let mut group = c.benchmark_group("update_degree_large");
     group.bench_function("original", |b| {
-        b.iter(|| DensePolynomialExt::find_degree(black_box(&large_poly), black_box(large_x), black_box(large_y)))
+        b.iter(|| {
+            let mut poly = large_poly.clone();
+            poly.update_degree();
+        })
     });
-    
     group.bench_function("execute_program", |b| {
-        b.iter(|| DensePolynomialExtEP::find_degree(black_box(&large_poly), black_box(large_x), black_box(large_y)))
+        b.iter(|| {
+            let mut ep = DensePolynomialExtEP::from_coeffs(
+                black_box(large_host), black_box(large_x), black_box(large_y)
+            );
+            ep.update_degree();
+        })
     });
     group.finish();
-    
-    // Very large polynomial benchmark
-    let very_large_x = 512;
-    let very_large_y = 512;
-    let very_large_poly = create_test_polynomial(very_large_x, very_large_y, 100);
-    
-    let mut group = c.benchmark_group("find_degree_very_large");
+
+    // 3) very large
+    let very_x = 512;
+    let very_y = 512;
+    let very_poly: DensePolynomialExt = create_test_polynomial(very_x, very_y, 1);
+    let mut very_coeffs = vec![ScalarField::zero(); very_x * very_y];
+    let mut very_host = HostSlice::from_mut_slice(&mut very_coeffs);
+    very_poly.copy_coeffs(0, very_host);
+
+    let mut group = c.benchmark_group("update_degree_very_large");
     group.bench_function("original", |b| {
-        b.iter(|| DensePolynomialExt::find_degree(black_box(&very_large_poly), black_box(very_large_x), black_box(very_large_y)))
+        b.iter(|| {
+            let mut poly = very_poly.clone();
+            poly.update_degree();
+        })
     });
-    
     group.bench_function("execute_program", |b| {
-        b.iter(|| DensePolynomialExtEP::find_degree(black_box(&very_large_poly), black_box(very_large_x), black_box(very_large_y)))
+        b.iter(|| {
+            let mut ep = DensePolynomialExtEP::from_coeffs(
+                black_box(very_host), black_box(very_x), black_box(very_y)
+            );
+            ep.update_degree();
+        })
     });
     group.finish();
 }
+
 
 fn bench_from_rou_evals(c: &mut Criterion) {
     // 코셋 값 설정
@@ -479,168 +502,168 @@ fn bench_polynomial_mul(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_div_by_vanishing(c: &mut Criterion) {
-  // 바니싱 다항식 차수 설정 - 모든 경우에 2의 거듭제곱
-  let vanishing_degrees = vec![
-      (4, 4, "equal_small"),
-      (8, 8, "equal_medium"),
-      (2, 8, "different_small"),
-      (4, 16, "different_medium")
-  ];
+// fn bench_div_by_vanishing(c: &mut Criterion) {
+//   // 바니싱 다항식 차수 설정 - 모든 경우에 2의 거듭제곱
+//   let vanishing_degrees = vec![
+//       (4, 4, "equal_small"),
+//       (8, 8, "equal_medium"),
+//       (2, 8, "different_small"),
+//       (4, 16, "different_medium")
+//   ];
   
-  // 다항식 크기 설정
-  let poly_sizes = vec![
-      (8, 8, "tiny"),
-      (16, 16, "small"),
-      (32, 32, "medium"),
-      (64, 64, "large")
-  ];
+//   // 다항식 크기 설정
+//   let poly_sizes = vec![
+//       (8, 8, "tiny"),
+//       (16, 16, "small"),
+//       (32, 32, "medium"),
+//       (64, 64, "large")
+//   ];
   
-  for (poly_x, poly_y, poly_desc) in poly_sizes {
-      for (denom_x, denom_y, denom_desc) in &vanishing_degrees {
-          // 다항식 차수는 vanishing 다항식 차수보다 커야 함
-          if poly_x <= *denom_x || poly_y <= *denom_y {
-              continue;
-          }
+//   for (poly_x, poly_y, poly_desc) in poly_sizes {
+//       for (denom_x, denom_y, denom_desc) in &vanishing_degrees {
+//           // 다항식 차수는 vanishing 다항식 차수보다 커야 함
+//           if poly_x <= *denom_x || poly_y <= *denom_y {
+//               continue;
+//           }
           
-          // m>=2 && n==2 조건 확인 (div_by_vanishing이 지원하는 조건)
-          let m = poly_x / *denom_x;
-          let n = poly_y / *denom_y;
-          if !(m >= 2 && n == 2) {
-              continue;
-          }
+//           // m>=2 && n==2 조건 확인 (div_by_vanishing이 지원하는 조건)
+//           let m = poly_x / *denom_x;
+//           let n = poly_y / *denom_y;
+//           if !(m >= 2 && n == 2) {
+//               continue;
+//           }
           
-          // 벤치마크 그룹 이름 생성
-          let group_name = format!("div_by_vanishing_{}_{}", poly_desc, denom_desc);
-          let mut group = c.benchmark_group(&group_name);
+//           // 벤치마크 그룹 이름 생성
+//           let group_name = format!("div_by_vanishing_{}_{}", poly_desc, denom_desc);
+//           let mut group = c.benchmark_group(&group_name);
           
-          // 테스트 다항식 생성 (비영 계수 일정 수 포함)
-          let num_nonzero = std::cmp::min(poly_x * poly_y / 4, 100);
-          let test_poly_coeffs = create_test_coefficients(poly_x, poly_y, num_nonzero);
-          let coeffs_slice = HostSlice::from_slice(&test_poly_coeffs);
+//           // 테스트 다항식 생성 (비영 계수 일정 수 포함)
+//           let num_nonzero = std::cmp::min(poly_x * poly_y / 4, 100);
+//           let test_poly_coeffs = create_test_coefficients(poly_x, poly_y, num_nonzero);
+//           let coeffs_slice = HostSlice::from_slice(&test_poly_coeffs);
           
-          // 원본 구현 벤치마크
-          group.bench_function("original", |b| {
-              b.iter_batched(
-                  // 각 반복마다 새로운 다항식 생성
-                  || DensePolynomialExt::from_coeffs(coeffs_slice, poly_x, poly_y),
-                  |poly| {
-                      black_box(poly.div_by_vanishing(
-                          black_box(*denom_x as i64), 
-                          black_box(*denom_y as i64)
-                      ))
-                  },
-                  BatchSize::SmallInput
-              )
-          });
+//           // 원본 구현 벤치마크
+//           group.bench_function("original", |b| {
+//               b.iter_batched(
+//                   // 각 반복마다 새로운 다항식 생성
+//                   || DensePolynomialExt::from_coeffs(coeffs_slice, poly_x, poly_y),
+//                   |poly| {
+//                       black_box(poly.div_by_vanishing(
+//                           black_box(*denom_x as i64), 
+//                           black_box(*denom_y as i64)
+//                       ))
+//                   },
+//                   BatchSize::SmallInput
+//               )
+//           });
           
-          // Execute_program 구현 벤치마크
-          group.bench_function("execute_program", |b| {
-              b.iter_batched(
-                  // 각 반복마다 새로운 다항식 생성
-                  || DensePolynomialExtEP::from_coeffs(coeffs_slice, poly_x, poly_y),
-                  |poly| {
-                      black_box(poly.div_by_vanishing(
-                          black_box(*denom_x as i64), 
-                          black_box(*denom_y as i64)
-                      ))
-                  },
-                  BatchSize::SmallInput
-              )
-          });
+//           // Execute_program 구현 벤치마크
+//           group.bench_function("execute_program", |b| {
+//               b.iter_batched(
+//                   // 각 반복마다 새로운 다항식 생성
+//                   || DensePolynomialExtEP::from_coeffs(coeffs_slice, poly_x, poly_y),
+//                   |poly| {
+//                       black_box(poly.div_by_vanishing(
+//                           black_box(*denom_x as i64), 
+//                           black_box(*denom_y as i64)
+//                       ))
+//                   },
+//                   BatchSize::SmallInput
+//               )
+//           });
           
-          group.finish();
-      }
-  }
+//           group.finish();
+//       }
+//   }
   
-  // 특별히 m>=2 && n==2 조건에 맞는 케이스들 추가
-  let special_cases = vec![
-      (8, 8, 4, 4),    // m=2, n=2
-      (8, 16, 4, 4),   // m=2, n=4
-      (8, 32, 4, 4),   // m=2, n=8
-      (8, 64, 4, 4)    // m=2, n=16
-  ];
+//   // 특별히 m>=2 && n==2 조건에 맞는 케이스들 추가
+//   let special_cases = vec![
+//       (8, 8, 4, 4),    // m=2, n=2
+//       (8, 16, 4, 4),   // m=2, n=4
+//       (8, 32, 4, 4),   // m=2, n=8
+//       (8, 64, 4, 4)    // m=2, n=16
+//   ];
   
-  for (poly_x, poly_y, denom_x, denom_y) in special_cases {
-      let m = poly_x / denom_x;
-      let n = poly_y / denom_y;
+//   for (poly_x, poly_y, denom_x, denom_y) in special_cases {
+//       let m = poly_x / denom_x;
+//       let n = poly_y / denom_y;
       
-      // 조건 확인
-      if !(m >= 2 && n == 2) {
-          continue;
-      }
+//       // 조건 확인
+//       if !(m >= 2 && n == 2) {
+//           continue;
+//       }
       
-      let group_name = format!("div_by_vanishing_special_m{}_n{}", m, n);
-      let mut group = c.benchmark_group(&group_name);
+//       let group_name = format!("div_by_vanishing_special_m{}_n{}", m, n);
+//       let mut group = c.benchmark_group(&group_name);
       
-      // 테스트 다항식 생성
-      let num_nonzero = std::cmp::min(poly_x * poly_y / 4, 100);
-      let test_poly_coeffs = create_test_coefficients(poly_x, poly_y, num_nonzero);
-      let coeffs_slice = HostSlice::from_slice(&test_poly_coeffs);
+//       // 테스트 다항식 생성
+//       let num_nonzero = std::cmp::min(poly_x * poly_y / 4, 100);
+//       let test_poly_coeffs = create_test_coefficients(poly_x, poly_y, num_nonzero);
+//       let coeffs_slice = HostSlice::from_slice(&test_poly_coeffs);
       
-      // 원본 구현 벤치마크
-      group.bench_function("original", |b| {
-          b.iter_batched(
-              || DensePolynomialExt::from_coeffs(coeffs_slice, poly_x, poly_y),
-              |poly| {
-                  black_box(poly.div_by_vanishing(
-                      black_box(denom_x as i64), 
-                      black_box(denom_y as i64)
-                  ))
-              },
-              BatchSize::SmallInput
-          )
-      });
+//       // 원본 구현 벤치마크
+//       group.bench_function("original", |b| {
+//           b.iter_batched(
+//               || DensePolynomialExt::from_coeffs(coeffs_slice, poly_x, poly_y),
+//               |poly| {
+//                   black_box(poly.div_by_vanishing(
+//                       black_box(denom_x as i64), 
+//                       black_box(denom_y as i64)
+//                   ))
+//               },
+//               BatchSize::SmallInput
+//           )
+//       });
       
-      // Execute_program 구현 벤치마크
-      group.bench_function("execute_program", |b| {
-          b.iter_batched(
-              || DensePolynomialExtEP::from_coeffs(coeffs_slice, poly_x, poly_y),
-              |poly| {
-                  black_box(poly.div_by_vanishing(
-                      black_box(denom_x as i64), 
-                      black_box(denom_y as i64)
-                  ))
-              },
-              BatchSize::SmallInput
-          )
-      });
+//       // Execute_program 구현 벤치마크
+//       group.bench_function("execute_program", |b| {
+//           b.iter_batched(
+//               || DensePolynomialExtEP::from_coeffs(coeffs_slice, poly_x, poly_y),
+//               |poly| {
+//                   black_box(poly.div_by_vanishing(
+//                       black_box(denom_x as i64), 
+//                       black_box(denom_y as i64)
+//                   ))
+//               },
+//               BatchSize::SmallInput
+//           )
+//       });
       
-      group.finish();
-  }
+//       group.finish();
+//   }
   
-  // 추가 테스트: div_by_vanishing과 divide_x/divide_y 비교
-  let test_cases = vec![
-      (16, 8, 4, 4, "small"),
-      (32, 8, 4, 4, "medium"),
-  ];
+//   // 추가 테스트: div_by_vanishing과 divide_x/divide_y 비교
+//   let test_cases = vec![
+//       (16, 8, 4, 4, "small"),
+//       (32, 8, 4, 4, "medium"),
+//   ];
   
-  for (poly_x, poly_y, denom_x, denom_y, desc) in test_cases {
-      let group_name = format!("vanishing_vs_divide_{}", desc);
-      let mut group = c.benchmark_group(&group_name);
+//   for (poly_x, poly_y, denom_x, denom_y, desc) in test_cases {
+//       let group_name = format!("vanishing_vs_divide_{}", desc);
+//       let mut group = c.benchmark_group(&group_name);
       
-      // 테스트 다항식 생성
-      let num_nonzero = std::cmp::min(poly_x * poly_y / 4, 100);
-      let test_poly_coeffs = create_test_coefficients(poly_x, poly_y, num_nonzero);
-      let coeffs_slice = HostSlice::from_slice(&test_poly_coeffs);
+//       // 테스트 다항식 생성
+//       let num_nonzero = std::cmp::min(poly_x * poly_y / 4, 100);
+//       let test_poly_coeffs = create_test_coefficients(poly_x, poly_y, num_nonzero);
+//       let coeffs_slice = HostSlice::from_slice(&test_poly_coeffs);
       
-      // div_by_vanishing 벤치마크
-      group.bench_function("div_by_vanishing", |b| {
-          b.iter_batched(
-              || DensePolynomialExt::from_coeffs(coeffs_slice, poly_x, poly_y),
-              |poly| {
-                  black_box(poly.div_by_vanishing(
-                      black_box(denom_x as i64), 
-                      black_box(denom_y as i64)
-                  ))
-              },
-              BatchSize::SmallInput
-          )
-      });
+//       // div_by_vanishing 벤치마크
+//       group.bench_function("div_by_vanishing", |b| {
+//           b.iter_batched(
+//               || DensePolynomialExt::from_coeffs(coeffs_slice, poly_x, poly_y),
+//               |poly| {
+//                   black_box(poly.div_by_vanishing(
+//                       black_box(denom_x as i64), 
+//                       black_box(denom_y as i64)
+//                   ))
+//               },
+//               BatchSize::SmallInput
+//           )
+//       });
       
-      group.finish();
-  }
-}
+//       group.finish();
+//   }
+// }
 
 // 테스트용 계수 생성 함수
 fn create_test_coefficients(x_size: usize, y_size: usize, num_nonzero: usize) -> Vec<ScalarField> {
@@ -1013,9 +1036,9 @@ fn benchmark_scaling(c: &mut Criterion) {
 
 criterion_group!(
   benches, 
-  bench_find_degree, 
-//   bench_from_rou_evals,
-  // bench_resize,
+//   bench_update_degree, 
+  bench_from_rou_evals,
+//   bench_resize,
   // bench_polynomial_mul,
   // bench_div_by_vanishing,
 //   bench_to_rou_evals,

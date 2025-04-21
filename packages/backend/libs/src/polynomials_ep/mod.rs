@@ -4,8 +4,10 @@ use icicle_core::polynomials::UnivariatePolynomial;
 use icicle_bls12_381::symbol::bls12_381::FieldSymbol;
 use icicle_core::ntt;
 use icicle_core::symbol::Symbol;
-use icicle_core::program::{Instruction, PreDefinedProgram, Program, ReturningValueProgram};
-use icicle_bls12_381::program::bls12_381::FieldProgram;
+// Remove local enum definition since we want to use the one from icicle_core
+use icicle_core::program::PreDefinedProgram;
+use icicle_core::program::{Instruction, Program, ReturningValueProgram};
+use icicle_bls12_381::program::bls12_381::{FieldProgram, FieldReturningValueProgram};
 use icicle_core::vec_ops::{VecOps, VecOpsConfig, execute_program, transpose_matrix};
 use icicle_bls12_381::polynomials::DensePolynomial;
 use icicle_runtime::memory::{HostOrDeviceSlice, HostSlice, DeviceSlice, DeviceVec};
@@ -75,6 +77,7 @@ impl DensePolynomialExtEP {
     pub fn degree(&self) -> (i64, i64) {
         (self.x_degree, self.y_degree)
     }
+    
 }
 
 // impl Drop for DensePolynomialExtEP {
@@ -226,11 +229,16 @@ where
 
     // Methods to create polynomials from coefficients or roots-of-unity evaluations.
     fn from_coeffs<S: HostOrDeviceSlice<Self::Field> + ?Sized>(coeffs: &S, x_size: usize, y_size: usize) -> Self;
+
+    fn scale_coeffs_x(&self, scaler: Self::Field) -> Self;
+    fn scale_coeffs_y(&self, scaler: Self::Field) -> Self;
+    fn _scale_coeffs(&self, scaler: Self::Field, y_dir: bool, scaled_coeffs: &mut HostSlice<Self::Field>);
+
     fn from_rou_evals<S: HostOrDeviceSlice<Self::Field> + ?Sized>(evals: &S, x_size: usize, y_size: usize, coset_x: Option<&Self::Field>, coset_y: Option<&Self::Field>) -> Self;
     // Method to evaluate the polynomial over the roots-of-unity domain for power-of-two sized domain
     fn to_rou_evals<S: HostOrDeviceSlice<Self::Field> + ?Sized>(&self, coset_x: Option<&Self::Field>, coset_y: Option<&Self::Field>, evals: &mut S);
     
-    fn find_degree(coeffs: &DensePolynomial, x_size: usize, y_size: usize) -> (i64, i64);
+    fn update_degree(&mut self);
 
     // Method to divide this polynomial by vanishing polynomials 'X^{x_degree}-1' and 'Y^{y_degree}-1'.
     fn div_by_vanishing(&self, x_degree: i64, y_degree: i64) -> (Self, Self) where Self: Sized;
@@ -314,134 +322,39 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
     type Field = ScalarField;
     type FieldConfig = ScalarCfg;
 
-    fn find_degree(coeffs: &DensePolynomial, x_size: usize, y_size: usize) -> (i64, i64) {
-        let poly = coeffs;
-        let (min_size, is_min_x) = if x_size <= y_size {
-            (x_size, true)
-        } else {
-            (y_size, false)
-        };
-    
-       
-        
-        // Pre-process sub-polynomials to get their degrees
-        let mut degrees = vec![0i64; min_size];
-        
-        for ind in 0..min_size {
-            let sub_poly = if is_min_x {
-                // sub-polynomial of y
-                poly.slice(ind as u64 * y_size as u64, 1, y_size as u64)
-            } else {
-                // sub-polynomial of x
-                poly.slice(ind as u64, y_size as u64, x_size as u64)
-            };
-            degrees[ind] = sub_poly.degree() as i64;
-        }
-        
-        // Now we'll use execute_program to find max degrees
-        // First we need to convert our i64 data to ScalarField type
-        // Step 1: Create ScalarField vectors
-        
-        // Convert degrees to ScalarField
-        let mut scalar_degrees = Vec::with_capacity(min_size);
-        for deg in &degrees {
-            let mut arr = [0u32; 8];
-            arr[0] = *deg as u32;
-            scalar_degrees.push(ScalarField::from(arr));
-        }
-        
-        // Create indices array as ScalarField
-        let mut scalar_indices = Vec::with_capacity(min_size);
-        for i in 0..min_size {
-            let mut arr = [0u32; 8];
-            arr[0] = i as u32;
-            scalar_indices.push(ScalarField::from(arr));
-        }
-        
-        // Create result vectors to store max degrees
-        // Initialize with -1 equivalent
-        let mut arr = [0u32; 8];
-        arr[0] = u32::MAX;
-        let minus_one = ScalarField::from(arr); // This represents -1 in field arithmetic
-        let mut scalar_result_x = ScalarField::from(minus_one);
-        let mut scalar_result_y = ScalarField::from(minus_one);
-        
-        // Create host slices
-        let degrees_slice = HostSlice::from_slice(scalar_degrees.as_slice());
-        let indices_slice = HostSlice::from_slice(scalar_indices.as_slice());
-        
-        // Create a program that finds max degree
-        let max_finder_program = |vars: &mut [FieldSymbol]| {
-            // vars[0]: degree value (as ScalarField)
-            // vars[1]: index value (as ScalarField)
-            // vars[2]: current max_x_degree
-            // vars[3]: current max_y_degree
-            
-            // Check if degree is valid (not -1)
-            // In field arithmetic, we compare with minus_one
-            let degree_valid = vars[0].neq(&minus_one);
-            
-            if degree_valid {
-                if is_min_x {
-                    // Update max_y with degree if degree > current max_y
-                    if vars[0] > vars[3] {
-                        vars[3] = vars[0];
+    fn update_degree(&mut self) {
+        // 전체 계수 수
+        let size = self.x_size * self.y_size;
+
+        // 1) 호스트로 coefficients 복사
+        let mut host_coeffs = vec![ScalarField::zero(); size];
+        // copy_coeffs: Device→Host
+        self.copy_coeffs(0, HostSlice::from_mut_slice(&mut host_coeffs));
+
+        // 2) (index, coeff) 튜플을 병렬 이터레이터로 순회하며 non-zero인 것만 필터
+        let (max_x, max_y) = host_coeffs
+            .par_iter()
+            .enumerate()
+            .filter(|&(_i, coeff)| *coeff != ScalarField::zero())
+            .map(|(i, _)| {
+                // 1차원 인덱스를 2차원 (x, y) 좌표로 변환
+                (i / self.y_size, i % self.y_size)
+            })
+            .reduce(
+                || (0, 0),
+                |a, b| {
+                    // x 우선 비교, x 같으면 y 비교
+                    if b.0 > a.0 || (b.0 == a.0 && b.1 > a.1) {
+                        b
+                    } else {
+                        a
                     }
-                    // Update max_x with index if index > current max_x
-                    if vars[1] > vars[2] {
-                        vars[2] = vars[1];
-                    }
-                } else {
-                    // Update max_x with degree if degree > current max_x
-                    if vars[0] > vars[2] {
-                        vars[2] = vars[0];
-                    }
-                    // Update max_y with index if index > current max_y
-                    if vars[1] > vars[3] {
-                        vars[3] = vars[1];
-                    }
-                }
-            }
-        };
-        
-        // Create the program
-        let program = Program::new(max_finder_program, 4)
-            .expect("Failed to create max finder program");
-        
-        // Execute program for each element
-        for i in 0..min_size {
-            let mut max_x = scalar_result_x;
-            let mut max_y = scalar_result_y;
-            
-            // Set up variables for this iteration
-            let mut vars = [
-                degrees_slice[i],
-                indices_slice[i], 
-                max_x,
-                max_y
-            ];
-            
-            // Execute the program for this element
-            execute_program(&mut vars, &program, VecOpsConfig::default())
-                .expect("Failed to execute program");
-            
-            // Update the results
-            scalar_result_x = vars[2];
-            scalar_result_y = vars[3];
-        }
-        
-        // Convert ScalarField results back to i64
-        // This is simplified - we'd need proper conversion in real code
-        let max_x_degree = scalar_result_x.to_bytes_le()
-            .iter()
-            .fold(0i64, |acc, &byte| (acc << 8) | (byte as i64));
-        
-        let max_y_degree = scalar_result_y.to_bytes_le()
-            .iter()
-            .fold(0i64, |acc, &byte| (acc << 8) | (byte as i64));
-        
-        // Ensure non-negative degrees
-        (std::cmp::max(max_x_degree, 0), std::cmp::max(max_y_degree, 0))
+                },
+            );
+
+        // 3) 결과 저장
+        self.x_degree = max_x as i64;
+        self.y_degree = max_y as i64;
     }
 
     fn from_coeffs<S: HostOrDeviceSlice<Self::Field> + ?Sized>(coeffs: &S, x_size: usize, y_size: usize) -> Self {
@@ -463,118 +376,302 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         }
     }
 
-    fn from_rou_evals<S: HostOrDeviceSlice<Self::Field> + ?Sized>(
-        evals: &S, 
-        x_size: usize, 
-        y_size: usize, 
-        coset_x: Option<&Self::Field>, 
-        coset_y: Option<&Self::Field>
-    ) -> Self {
+    // fn scale_coeffs_x(&self, factor: ScalarField) -> Self {
+    //     let x = self.x_size;
+    //     let y = self.y_size;
+    //     let total = x * y;
+
+    //     // 1) 호스트에 기존 계수 통째로 복사
+    //     let mut host_coeffs = vec![ScalarField::zero(); total];
+    //     {
+    //         let mut host_slice = HostSlice::from_mut_slice(&mut host_coeffs);
+    //         self.copy_coeffs(0, host_slice);
+    //     }
+
+    //     // 2) 각 row(i)마다 factor^i 를 계산해 두는 배열
+    //     let mut row_powers = vec![ScalarField::one(); x];
+    //     for i in 1..x {
+    //         row_powers[i] = row_powers[i - 1].mul(factor);
+    //     }
+
+    //     // 3) Rayon 병렬로 모든 계수에 곱해 주기
+    //     let mut scaled = vec![ScalarField::zero(); total];
+    //     scaled
+    //         .par_chunks_mut(y)
+    //         .enumerate()
+    //         .for_each(|(i, chunk)| {
+    //             let p = row_powers[i];
+    //             let base = i * y;
+    //             for j in 0..chunk.len() {
+    //                 // chunk[j] = host_coeffs[base + j] * p
+    //                 chunk[j] = host_coeffs[base + j].mul(p);
+    //             }
+    //         });
+
+    //     // 4) 한 번에 Device 로 올려서 DensePolynomial 생성
+    //     DensePolynomialExtEP::from_coeffs(
+    //         HostSlice::from_slice(&scaled),
+    //         x,
+    //         y,
+    //     )
+    // }
+
+    // fn scale_coeffs_y(&self, factor: ScalarField) -> Self {
+    //     let x = self.x_size;
+    //     let y = self.y_size;
+    //     let total = x * y;
+
+    //     // 1) 호스트에 기존 계수 통째로 복사
+    //     let mut host_coeffs = vec![ScalarField::zero(); total];
+    //     {
+    //         let mut host_slice = HostSlice::from_mut_slice(&mut host_coeffs);
+    //         self.copy_coeffs(0, host_slice);
+    //     }
+
+    //     // 2) 각 column(j)마다 factor^j 를 계산해 두는 배열
+    //     let mut col_powers = vec![ScalarField::one(); y];
+    //     for j in 1..y {
+    //         col_powers[j] = col_powers[j - 1].mul(factor);
+    //     }
+
+    //     // 3) Rayon 병렬로 행 단위로 순회하며, (i,j) 성분에 col_powers[j] 곱하기
+    //     let mut scaled = vec![ScalarField::zero(); total];
+    //     scaled
+    //         .par_chunks_mut(y)
+    //         .enumerate()
+    //         .for_each(|(i, chunk)| {
+    //             for j in 0..chunk.len() {
+    //                 let base = i * y + j;
+    //                 chunk[j] = host_coeffs[base].mul(col_powers[j]);
+    //             }
+    //         });
+
+    //     // 4) 한 번에 Device 로 올려서 DensePolynomial 생성
+    //     DensePolynomialExtEP::from_coeffs(
+    //         HostSlice::from_slice(&scaled),
+    //         x,
+    //         y,
+    //     )
+    // }
+
+    fn scale_coeffs_x(&self, x_factor: Self::Field) -> Self {
+        let mut scaled_coeffs_vec = vec![Self::Field::zero(); self.x_size * self.y_size];
+        let scaled_coeffs = HostSlice::from_mut_slice(&mut scaled_coeffs_vec);
+        self._scale_coeffs(x_factor, false, scaled_coeffs);
+        return DensePolynomialExtEP::from_coeffs(
+            scaled_coeffs,
+            self.x_size, 
+            self.y_size
+        )
+    }
+
+    fn scale_coeffs_y(&self, y_factor: Self::Field) -> Self {
+        let mut scaled_coeffs_vec = vec![Self::Field::zero(); self.x_size * self.y_size];
+        let scaled_coeffs = HostSlice::from_mut_slice(&mut scaled_coeffs_vec);
+        self._scale_coeffs(y_factor, true, scaled_coeffs);
+        return DensePolynomialExtEP::from_coeffs(
+            scaled_coeffs,
+            self.x_size, 
+            self.y_size
+        )
+    }
+
+    fn _scale_coeffs(
+        &self,
+        factor: Self::Field,
+        y_dir: bool,
+        scaled_coeffs: &mut HostSlice<Self::Field>,
+    ) {
+        let x_size = self.x_size;
+        let y_size = self.y_size;
+        let size   = x_size * y_size;
+    
+        // 1) 원본 계수를 DeviceVec에 복사
+        let mut coeffs_dev = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+        self.poly.copy_coeffs(0, &mut coeffs_dev);
+        
+    
+        // 2) 스케일 테이블 생성 → DeviceVec
+        let mut scale_host = Vec::with_capacity(size);
+        if !y_dir {
+            let mut acc = Self::Field::one();
+            for _ in 0..x_size {
+                scale_host.extend(std::iter::repeat(acc.clone()).take(y_size));
+                acc = acc * factor.clone();
+            }
+        } else {
+            let mut acc = Self::Field::one();
+            let mut row_scale = Vec::with_capacity(x_size);
+            for _ in 0..x_size {
+                row_scale.push(acc.clone());
+                acc = acc * factor.clone();
+            }
+            for _ in 0..y_size {
+                scale_host.extend(row_scale.iter().cloned());
+            }
+        }
+        let mut scale_dev = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+        scale_dev
+            .copy_from_host(HostSlice::from_slice(&scale_host))
+            .unwrap();
+    
+        // 3) 결과를 담을 DeviceVec
+        let mut result_dev = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
+    
+        // 4) (a, scale) → out 람다 프로그램 생성
+        let mul_prog = FieldProgram::new(
+            |params: &mut Vec<FieldSymbol>| {
+                params[2] = params[0] * params[1];
+            },
+            3, // input a, input scale, output
+        )
+        .unwrap();
+    
+        // 5) execute_program 호출
+        let mut cfg  = VecOpsConfig::default();
+        let mut args: Vec<&dyn HostOrDeviceSlice<Self::Field>> = vec![
+            &coeffs_dev, // &DeviceVec<T>
+            &scale_dev,  // &DeviceVec<T>
+            &mut result_dev, // &mut DeviceVec<T>
+        ];
+        execute_program(&mut args, &mul_prog, &cfg).unwrap();
+    
+        // 6) 결과를 호스트로 복사
+        result_dev.copy_to_host(scaled_coeffs).unwrap();
+    }
+    
+    
+    
+    
+
+    // fn _scale_coeffs<S: HostOrDeviceSlice<Self::Field> + ?Sized>(
+    //     &self,
+    //     factor: Self::Field,
+    //     y_dir: bool,
+    //     scaled_coeffs: &mut S,
+    // ) {
+    //     let x_size = self.x_size;
+    //     let y_size = self.y_size;
+    //     let size = x_size * y_size;
+    
+    //     // 1) Create a program to copy coefficients
+    //     let coeffs_vec =&mut self.poly.coeffs_mut_slice();
+    //     let mut host = vec![Self::Field::zero(); size];
+    //     let mut host_slice = HostSlice::from_mut_slice(&mut host);
+        
+    //     // Copy program to transfer data from device to host
+    //     let copy_program = FieldProgram::new(
+    //         |vars: &mut Vec<FieldSymbol>| {
+    //             vars.push(vars[0].clone());
+    //         },
+    //         1
+    //     ).unwrap();
+        
+    //     // Execute copy operation
+    //     let vec_ops_cfg = VecOpsConfig::default();
+    //     let mut parameters = vec![
+    //         coeffs_vec,
+    //         host_slice.from_mut_slice(),
+    //     ];
+    //     execute_program(&mut parameters, &copy_program, &vec_ops_cfg).unwrap();
+    
+    //     // 2) 지수 테이블 준비
+    //     if !y_dir {
+    //         // X 방향: 각 row 에 factor^row
+    //         let mut row_pows = Vec::with_capacity(x_size);
+    //         let mut acc = Self::Field::one();
+    //         for _ in 0..x_size {
+    //             row_pows.push(acc.clone());
+    //             acc = acc * factor.clone();
+    //         }
+    
+    //         // 3) Rayon 으로 행 단위 병렬 스케일
+    //         host.par_chunks_mut(y_size)
+    //             .enumerate()
+    //             .for_each(|(row, chunk)| {
+    //                 let scale = &row_pows[row];
+    //                 for v in chunk.iter_mut() {
+    //                     *v = v.clone() * scale.clone();
+    //                 }
+    //             });
+    //     } else {
+    //         // Y 방향: 각 col 에 factor^col
+    //         let mut col_pows = Vec::with_capacity(y_size);
+    //         let mut acc = Self::Field::one();
+    //         for _ in 0..y_size {
+    //             col_pows.push(acc.clone());
+    //             acc = acc * factor.clone();
+    //         }
+    
+    //         // 3) Rayon 으로 요소별 병렬 스케일
+    //         host.par_iter_mut()
+    //             .enumerate()
+    //             .for_each(|(i, v)| {
+    //                 let col = i % y_size;
+    //                 *v = v.clone() * col_pows[col].clone();
+    //             });
+    //     }
+    
+    //     // 4) 결과를 scaled_coeffs 에 복사
+    //     let dst_ptr = unsafe { scaled_coeffs.as_mut_ptr() };
+    //     let dst_len = scaled_coeffs.len();
+    //     // 안전: ptr/len 은 항상 host.len() == size 와 일치
+    //     let out_slice = unsafe { std::slice::from_raw_parts_mut(dst_ptr, dst_len) };
+    //     out_slice.copy_from_slice(&host);
+    // }
+    
+    
+    
+
+    fn from_rou_evals<S: HostOrDeviceSlice<Self::Field> + ?Sized>(evals: &S, x_size: usize, y_size: usize, coset_x: Option<&Self::Field>, coset_y: Option<&Self::Field>) -> Self {
         if x_size == 0 || y_size == 0 {
             panic!("Invalid matrix size for from_rou_evals");
         }
         if x_size.is_power_of_two() == false || y_size.is_power_of_two() == false {
             panic!("The input sizes for from_rou_evals must be powers of two.")
         }
-    
+
         let size = x_size * y_size;
-    
+
         ntt::initialize_domain::<Self::Field>(
             ntt::get_root_of_unity::<Self::Field>(
-                size.try_into().unwrap(),
+                size.try_into()
+                    .unwrap(),
             ),
             &ntt::NTTInitDomainConfig::default(),
-        ).unwrap();
-    
+        )
+        .unwrap();
+
         let mut coeffs = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
         let mut cfg = ntt::NTTConfig::<Self::Field>::default();
         
         // IFFT along X
         cfg.batch_size = y_size as i32;
-        cfg.columns_batch = false;
+        cfg.columns_batch = true;
         ntt::ntt(evals, ntt::NTTDir::kInverse, &cfg, &mut coeffs).unwrap();
-        
         // IFFT along Y
         cfg.batch_size = x_size as i32;
-        cfg.columns_batch = true;
+        cfg.columns_batch = false;
         ntt::ntt_inplace(&mut coeffs, ntt::NTTDir::kInverse, &cfg).unwrap();
-    
-        let mut scaled_coeffs = coeffs;
-        let vec_ops_cfg = VecOpsConfig::default();
-    
-        let mul_program: FieldProgram = FieldProgram::new(
-            |vars: &mut Vec<FieldSymbol>| {
-                vars[2] = vars[0] * vars[1];
-            },
-            3 
-        ).unwrap();
-    
+
+        ntt::release_domain::<Self::Field>().unwrap();
+
+        let mut poly = DensePolynomialExtEP::from_coeffs(
+            &coeffs,
+            x_size,
+            y_size
+        );
+
         if let Some(_factor) = coset_x {
             let factor = _factor.inv();
-            let mut _right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            let mut scaler = Self::Field::one();
-            
-            for ind in 0..x_size {
-                _right_scale[ind * y_size .. (ind+1) * y_size].copy_from_host(HostSlice::from_slice(&vec![scaler; y_size])).unwrap();
-                scaler = scaler.mul(factor);
-            }
-            
-            let mut right_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            Self::FieldConfig::transpose(&_right_scale, x_size as u32, y_size as u32, &mut right_scale, &vec_ops_cfg).unwrap();
-            
-            let mut temp = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            
-            let mut host_a = vec![Self::Field::zero(); size];
-            let mut host_b = vec![Self::Field::zero(); size];
-            let mut host_result = vec![Self::Field::zero(); size];
-            
-            scaled_coeffs.copy_to_host(HostSlice::from_mut_slice(&mut host_a)).unwrap();
-            right_scale.copy_to_host(HostSlice::from_mut_slice(&mut host_b)).unwrap();
-            
-            let mut parameters = vec![
-                HostSlice::from_slice(&host_a),
-                HostSlice::from_slice(&host_b),
-                HostSlice::from_mut_slice(&mut host_result)
-            ];
-            
-            execute_program(&mut parameters, &mul_program, &vec_ops_cfg).unwrap();
-            
-            temp.copy_from_host(HostSlice::from_slice(&host_result)).unwrap();
-            scaled_coeffs = temp;
+            poly = poly.scale_coeffs_x(factor);
         }
-    
+
         if let Some(_factor) = coset_y {
             let factor = _factor.inv();
-            let mut left_scale = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            let mut scaler = Self::Field::one();
-            
-            for ind in 0..y_size {
-                left_scale[ind * x_size .. (ind+1) * x_size].copy_from_host(HostSlice::from_slice(&vec![scaler; x_size])).unwrap();
-                scaler = scaler.mul(factor);
-            }
-            
-            let mut temp = DeviceVec::<Self::Field>::device_malloc(size).unwrap();
-            
-            let mut host_a = vec![Self::Field::zero(); size];
-            let mut host_b = vec![Self::Field::zero(); size];
-            let mut host_result = vec![Self::Field::zero(); size];
-            
-            scaled_coeffs.copy_to_host(HostSlice::from_mut_slice(&mut host_a)).unwrap();
-            left_scale.copy_to_host(HostSlice::from_mut_slice(&mut host_b)).unwrap();
-            
-            let mut parameters = vec![
-                HostSlice::from_slice(&host_a),
-                HostSlice::from_slice(&host_b),
-                HostSlice::from_mut_slice(&mut host_result)
-            ];
-            
-            execute_program(&mut parameters, &mul_program, &vec_ops_cfg).unwrap();
-            
-            temp.copy_from_host(HostSlice::from_slice(&host_result)).unwrap();
-            scaled_coeffs = temp;
+            poly = poly.scale_coeffs_y(factor);
         }
-    
-        DensePolynomialExtEP::from_coeffs(&scaled_coeffs, x_size, y_size)
+        return poly
     }
 
     fn to_rou_evals<S: HostOrDeviceSlice<Self::Field> + ?Sized>(
@@ -795,68 +892,52 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         }
     }
 
-    
     fn resize(&mut self, target_x_size: usize, target_y_size: usize) {
-        // Check and calculate sizes as power of 2
         let (new_x_size, new_y_size) = _find_size_as_twopower(target_x_size, target_y_size);
-        
-        // If sizes are already as requested, return early
         if self.x_size == new_x_size && self.y_size == new_y_size {
             return;
         }
-        
-        // Store current coefficients in host memory
-        let orig_size = self.x_size * self.y_size;
-        let mut orig_coeffs_vec = vec![ScalarField::zero(); orig_size];
-        let orig_coeffs = HostSlice::from_mut_slice(&mut orig_coeffs_vec);
-        self.copy_coeffs(0, orig_coeffs);
-        
-        // Allocate memory for the resized polynomial
-        let new_size = new_x_size * new_y_size;
-        let mut res_coeffs_vec = vec![ScalarField::zero(); new_size];
-        
-        // Since we can't use FieldSymbol.to_u32(), we'll approach this differently
-        // We'll create a row-by-row copy program instead
-        
-        let copy_program = FieldProgram::new(
-            |vars: &mut Vec<FieldSymbol>| {
-                vars[1] = vars[0];
-            },
-            2 
-        ).unwrap();
-        
-        let vec_ops_cfg = VecOpsConfig::default();
-        
-        // Copy row by row, similar to the original implementation
-        for i in 0..std::cmp::min(self.y_size, new_y_size) {
-            let each_x_size = std::cmp::min(self.x_size, new_x_size);
-            
-            let src_start = self.x_size * i;
-            let dst_start = new_x_size * i;
-            
-            // Create slices for this row
-            let src_row = &orig_coeffs_vec[src_start..src_start + each_x_size];
-            let mut dst_row = vec![ScalarField::zero(); each_x_size]; 
-            
-            // Set up parameters for this row
-            let mut parameters = vec![
-                HostSlice::from_slice(src_row),
-                HostSlice::from_mut_slice(&mut dst_row)
-            ];
-            
-            // Execute copy program for this row
-            execute_program(&mut parameters, &copy_program, &vec_ops_cfg).unwrap();
-            
-            // Copy the results back to the result vector
-            res_coeffs_vec[dst_start..dst_start + each_x_size].copy_from_slice(&dst_row);
+    
+        let old_x = self.x_size;
+        let old_y = self.y_size;
+        let old_len = old_x * old_y;
+        let new_len = new_x_size * new_y_size;
+    
+        // 1) 호스트로 기존 계수 복사
+        let mut host_coeffs = vec![ScalarField::zero(); old_len];
+        {
+            let mut scratch = HostSlice::from_mut_slice(&mut host_coeffs);
+            self.copy_coeffs(0, scratch);
         }
-        
-        // Update polynomial with new coefficients and dimensions
-        let res_coeffs = HostSlice::from_slice(&res_coeffs_vec);
-        self.poly = DensePolynomial::from_coeffs(res_coeffs, new_size);
+    
+        // 2) Rayon 병렬로 각 행(row)별로 복사
+        let mut new_host = vec![ScalarField::zero(); new_len];
+        new_host
+            .par_chunks_mut(new_y_size)
+            .enumerate()
+            .for_each(|(row_idx, row_chunk)| {
+                if row_idx < old_x {
+                    // 복사할 길이 계산
+                    let take = old_y.min(new_y_size);
+                    let src_start = row_idx * old_y;
+                    // 안전하게 슬라이스
+                    row_chunk[..take].copy_from_slice(&host_coeffs[src_start .. src_start + take]);
+                }
+                // else: 새로 생긴 행은 이미 0으로 초기화되어 있음
+            });
+    
+        // 3) 한 번에 디바이스로 올리기
+        let host_slice = HostSlice::from_slice(&new_host);
+        self.poly = DensePolynomial::from_coeffs(host_slice, new_len);
+    
+        // 4) 사이즈 메타데이터 갱신
         self.x_size = new_x_size;
         self.y_size = new_y_size;
     }
+     
+    
+    
+    
 
     fn optimize_size(&mut self) {
         let target_x_size = self.x_degree as usize + 1;
