@@ -3,9 +3,9 @@ use icicle_core::traits::{Arithmetic, FieldConfig, FieldImpl, GenerateRandom};
 use icicle_core::polynomials::UnivariatePolynomial;
 use icicle_bls12_381::symbol::bls12_381::FieldSymbol;
 use icicle_core::ntt;
-use icicle_core::symbol::Symbol;
+// use icicle_core::symbol::Symbol;
 // Remove local enum definition since we want to use the one from icicle_core
-use icicle_core::program::PreDefinedProgram;
+// use icicle_core::program::PreDefinedProgram;
 use icicle_core::program::{Instruction, Program, ReturningValueProgram};
 use icicle_bls12_381::program::bls12_381::{FieldProgram, FieldReturningValueProgram};
 use icicle_core::vec_ops::{VecOps, VecOpsConfig, execute_program, transpose_matrix};

@@ -347,7 +347,31 @@ pub fn scaled_outer_product(
         row_vec, 
         res
     );
-    
+}
+
+pub fn scaled_outer_product_ep(
+    col_vec: &Box<[ScalarField]>, 
+    row_vec: &Box<[ScalarField]>,
+    scaler: Option<&ScalarField>, 
+    res: &mut Box<[ScalarField]>
+) {
+    let col_size = col_vec.len();
+    let row_size = row_vec.len();
+    let size = col_size * row_size;
+    if res.len() != size {
+        panic!("Insufficient buffer length");
+    }
+    let mut scaled_vec = vec![ScalarField::zero(); col_size].into_boxed_slice();
+    if let Some(_scaler) = scaler {
+        scale_vec(*_scaler, col_vec, &mut scaled_vec);
+    } else {
+        scaled_vec.clone_from(col_vec);
+    }
+    outer_product_two_vecs_ep(
+        &scaled_vec, 
+        row_vec, 
+        res
+    );
 }
 
 #[deprecated(

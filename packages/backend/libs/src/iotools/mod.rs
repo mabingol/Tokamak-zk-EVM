@@ -1,7 +1,9 @@
-use icicle_bls12_381::curve::{ScalarField, ScalarCfg, G1Affine, G2Affine, BaseField, G2BaseField};
+use icicle_bls12_381::curve::{BaseField, G1Affine, G1Projective, G2Affine, G2BaseField, ScalarCfg, ScalarField};
+use icicle_core::msm;
 use icicle_core::ntt;
 use icicle_core::traits::{Arithmetic, FieldImpl, GenerateRandom};
 use icicle_core::vec_ops::{VecOps, VecOpsConfig};
+use icicle_runtime::stream::IcicleStream;
 use crate::group_structures::Sigma;
 use crate::bivariate_polynomial::{BivariatePolynomial, DensePolynomialExt};
 use crate::vector_operations::transpose_inplace;
@@ -407,6 +409,28 @@ pub fn scaled_outer_product_1d(
     );
 }
 
+pub fn scaled_outer_product_1d_ep(
+    col_vec: &Box<[ScalarField]>, 
+    row_vec: &Box<[ScalarField]>, 
+    g1_gen: &G1Affine, 
+    scaler: Option<&ScalarField>, 
+    res: &mut Box<[G1serde]>
+) {
+    let col_size = col_vec.len();
+    let row_size = row_vec.len();
+    let size = col_size * row_size;
+    if res.len() != size {
+        panic!("Insufficient buffer length");
+    }
+    let mut res_coef = vec![ScalarField::zero(); size].into_boxed_slice();
+    scaled_outer_product_ep(col_vec, row_vec, scaler, &mut res_coef);
+    from_coef_vec_to_g1serde_vec_modified(
+        &res_coef,
+        g1_gen,
+        res,
+    );
+}
+
 pub fn from_coef_vec_to_g1serde_vec(coef: &Box<[ScalarField]>, gen: &G1Affine, res: &mut Box<[G1serde]>) {
     use std::sync::atomic::{AtomicU32, Ordering};
     use rayon::prelude::*;
@@ -444,8 +468,54 @@ pub fn from_coef_vec_to_g1serde_vec(coef: &Box<[ScalarField]>, gen: &G1Affine, r
             }
         });
     print!("\r");
-
     // println!("Number of nonzero coefficients: {:?}", coef.len() - nzeros);
+}
+
+pub fn from_coef_vec_to_g1serde_vec_modified(
+    coef: &Box<[ScalarField]>,
+    gen: &G1Affine,
+    res: &mut Box<[G1serde]>,
+) {
+    let n = coef.len();
+    assert_eq!(res.len(), n, "버퍼 길이가 coef 길이와 같아야 합니다");
+
+    // 1) 호스트 메모리 슬라이스 준비
+    let scalars_host = HostSlice::from_slice(coef.as_ref());
+
+    // 2) gen affine vector preparation
+    let points_host = vec![*gen; n];
+    let points_host = HostSlice::from_slice(&points_host);
+
+    // 3) 결과용 DeviceVec 할당
+    let mut result_dev = DeviceVec::<G1Projective>::device_malloc(n).unwrap();
+
+    // 4) MSM 구성 및 실행
+    let mut cfg = msm::MSMConfig::default();
+    // // 비동기 스트림 사용 원하시면:
+    let stream = IcicleStream::create().unwrap();
+    cfg.is_async = true;
+    cfg.stream_handle = *stream;
+
+    msm::msm(
+        scalars_host,         // &[ScalarField]
+        points_host,          // &[G1Projective]
+        &cfg,
+        &mut result_dev[..],  // &mut DeviceSlice<G1Projective>
+    )
+    .unwrap();
+    // // 필요하면:
+    stream.synchronize().unwrap();
+
+    // 5) 디바이스 결과를 호스트로 복사
+    let mut host_out = vec![G1Projective::zero(); n];
+    result_dev
+        .copy_to_host(HostSlice::from_mut_slice(&mut host_out))
+        .unwrap();
+
+    // 6) G1Affine + G1serde 로 변환
+    for (i, p) in host_out.into_iter().enumerate() {
+        res[i] = G1serde(G1Affine::from(p));
+    }
 }
 
 pub fn from_coef_vec_to_g1serde_mat(coef: &Box<[ScalarField]>, r_size: usize, c_size: usize, gen: &G1Affine, res: &mut Box<[Box<[G1serde]>]>) {
