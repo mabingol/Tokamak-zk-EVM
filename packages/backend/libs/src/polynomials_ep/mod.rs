@@ -323,39 +323,35 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
     type FieldConfig = ScalarCfg;
 
     fn update_degree(&mut self) {
-        // 전체 계수 수
         let size = self.x_size * self.y_size;
-
-        // 1) 호스트로 coefficients 복사
-        let mut host_coeffs = vec![ScalarField::zero(); size];
-        // copy_coeffs: Device→Host
-        self.copy_coeffs(0, HostSlice::from_mut_slice(&mut host_coeffs));
-
-        // 2) (index, coeff) 튜플을 병렬 이터레이터로 순회하며 non-zero인 것만 필터
-        let (max_x, max_y) = host_coeffs
-            .par_iter()
-            .enumerate()
-            .filter(|&(_i, coeff)| *coeff != ScalarField::zero())
-            .map(|(i, _)| {
-                // 1차원 인덱스를 2차원 (x, y) 좌표로 변환
-                (i / self.y_size, i % self.y_size)
+        let mut buf = vec![ScalarField::zero(); size];
+        {
+            let mut slice = HostSlice::from_mut_slice(&mut buf);
+            self.poly.copy_coeffs(0, slice);
+        }
+    
+        let x_deg = (0..self.x_size)
+            .into_par_iter()
+            .filter(|&i| {
+                let row = &buf[i * self.y_size .. (i+1) * self.y_size];
+                row.iter().any(|c| *c != ScalarField::zero())
             })
-            .reduce(
-                || (0, 0),
-                |a, b| {
-                    // x 우선 비교, x 같으면 y 비교
-                    if b.0 > a.0 || (b.0 == a.0 && b.1 > a.1) {
-                        b
-                    } else {
-                        a
-                    }
-                },
-            );
-
-        // 3) 결과 저장
-        self.x_degree = max_x as i64;
-        self.y_degree = max_y as i64;
+            .max()
+            .unwrap_or(0);
+    
+        let y_deg = (0..self.y_size)
+            .into_par_iter()
+            .filter(|&j| {
+                (0..self.x_size).any(|i| buf[i * self.y_size + j] != ScalarField::zero())
+            })
+            .max()
+            .unwrap_or(0);
+    
+        self.x_degree = x_deg as i64;
+        self.y_degree = y_deg as i64;
     }
+    
+
 
     fn from_coeffs<S: HostOrDeviceSlice<Self::Field> + ?Sized>(coeffs: &S, x_size: usize, y_size: usize) -> Self {
         if x_size == 0 || y_size == 0 {

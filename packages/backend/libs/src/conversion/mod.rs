@@ -38,7 +38,6 @@ impl Conversion {
       
       let pairing_result = Bls12_381::pairing(g1, g2);
       
-      
       let g1_double = (g1.into_group() * two).into_affine();
       let pairing_double = Bls12_381::pairing(g1_double, g2);
       let pairing_squared = pairing_result.0.pow(two.into_bigint());    

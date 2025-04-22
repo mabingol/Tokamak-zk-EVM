@@ -22,7 +22,7 @@ fn create_test_polynomial(x_size: usize, y_size: usize, num_nonzero: usize) -> D
     DensePolynomialExt::from_coeffs(HostSlice::from_slice(&coeffs), x_size, y_size)
 }
 
-// 랜덤 평가값을 생성하는 함수
+
 fn create_random_evals(size: usize) -> Vec<ScalarField> {
   let evals = ScalarCfg::generate_random(size);
     
@@ -30,11 +30,11 @@ fn create_random_evals(size: usize) -> Vec<ScalarField> {
 }
 
 fn bench_update_degree(c: &mut Criterion) {
-    // 1) small
+    
     let small_x = 64;
     let small_y = 128;
     let small_poly: DensePolynomialExt = create_test_polynomial(small_x, small_y, 1);
-    // 계수 복사를 위한 HostSlice 준비
+    
     let mut small_coeffs = vec![ScalarField::zero(); small_x * small_y];
     let mut small_host = HostSlice::from_mut_slice(&mut small_coeffs);
     small_poly.copy_coeffs(0, small_host);
@@ -42,14 +42,13 @@ fn bench_update_degree(c: &mut Criterion) {
     let mut group = c.benchmark_group("update_degree_small");
     group.bench_function("original", |b| {
         b.iter(|| {
-            // 매 반복마다 clone 해서 update_degree 호출
             let mut poly = small_poly.clone();
             poly.update_degree();
         })
     });
-    group.bench_function("execute_program", |b| {
+    group.bench_function("rayon", |b| {
         b.iter(|| {
-            // 매 반복마다 EP 버전 인스턴스 생성해서 update_degree 호출
+            
             let mut ep = DensePolynomialExtEP::from_coeffs(
                 black_box(small_host), black_box(small_x), black_box(small_y)
             );
@@ -58,7 +57,6 @@ fn bench_update_degree(c: &mut Criterion) {
     });
     group.finish();
 
-    // 2) large
     let large_x = 256;
     let large_y = 256;
     let large_poly: DensePolynomialExt = create_test_polynomial(large_x, large_y, 1);
@@ -73,7 +71,7 @@ fn bench_update_degree(c: &mut Criterion) {
             poly.update_degree();
         })
     });
-    group.bench_function("execute_program", |b| {
+    group.bench_function("rayon", |b| {
         b.iter(|| {
             let mut ep = DensePolynomialExtEP::from_coeffs(
                 black_box(large_host), black_box(large_x), black_box(large_y)
@@ -98,7 +96,7 @@ fn bench_update_degree(c: &mut Criterion) {
             poly.update_degree();
         })
     });
-    group.bench_function("execute_program", |b| {
+    group.bench_function("rayon", |b| {
         b.iter(|| {
             let mut ep = DensePolynomialExtEP::from_coeffs(
                 black_box(very_host), black_box(very_x), black_box(very_y)
@@ -111,11 +109,10 @@ fn bench_update_degree(c: &mut Criterion) {
 
 
 fn bench_from_rou_evals(c: &mut Criterion) {
-    // 코셋 값 설정
     let coset_x_val = ScalarField::from_u32(7u32);
     let coset_y_val = ScalarField::from_u32(11u32);
     
-    // 작은 크기 벤치마크
+    
     let small_x = 8;
     let small_y = 8;
     let small_size = small_x * small_y;
@@ -123,28 +120,6 @@ fn bench_from_rou_evals(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("from_rou_evals_small");
     
-    // 코셋 없음
-    group.bench_function("original_no_coset", |b| {
-        b.iter(|| DensePolynomialExt::from_rou_evals(
-            black_box(HostSlice::from_slice(&small_evals)),
-            black_box(small_x),
-            black_box(small_y),
-            black_box(None),
-            black_box(None)
-        ))
-    });
-    
-    group.bench_function("execute_program_no_coset", |b| {
-        b.iter(|| DensePolynomialExtEP::from_rou_evals(
-            black_box(HostSlice::from_slice(&small_evals)),
-            black_box(small_x),
-            black_box(small_y),
-            black_box(None),
-            black_box(None)
-        ))
-    });
-    
-    // X 코셋만
     group.bench_function("original_x_coset", |b| {
         b.iter(|| DensePolynomialExt::from_rou_evals(
             black_box(HostSlice::from_slice(&small_evals)),
@@ -186,7 +161,6 @@ fn bench_from_rou_evals(c: &mut Criterion) {
         ))
     });
     
-    // 두 코셋 모두
     group.bench_function("original_both_cosets", |b| {
         b.iter(|| DensePolynomialExt::from_rou_evals(
             black_box(HostSlice::from_slice(&small_evals)),
@@ -209,7 +183,6 @@ fn bench_from_rou_evals(c: &mut Criterion) {
     
     group.finish();
     
-    // 중간 크기 벤치마크
     let medium_x = 16;
     let medium_y = 16;
     let medium_size = medium_x * medium_y;
@@ -217,7 +190,6 @@ fn bench_from_rou_evals(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("from_rou_evals_medium");
     
-    // 두 코셋 모두
     group.bench_function("original_both_cosets", |b| {
         b.iter(|| DensePolynomialExt::from_rou_evals(
             black_box(HostSlice::from_slice(&medium_evals)),
@@ -271,7 +243,6 @@ fn bench_from_rou_evals(c: &mut Criterion) {
     
     group.finish();
     
-    // 불균형 크기 벤치마크
     let unbalanced_x = 8;
     let unbalanced_y = 32;
     let unbalanced_size = unbalanced_x * unbalanced_y;
@@ -279,7 +250,6 @@ fn bench_from_rou_evals(c: &mut Criterion) {
     
     let mut group = c.benchmark_group("from_rou_evals_unbalanced");
     
-    // 두 코셋 모두
     group.bench_function("original_both_cosets", |b| {
         b.iter(|| DensePolynomialExt::from_rou_evals(
             black_box(HostSlice::from_slice(&unbalanced_evals)),
@@ -1036,8 +1006,8 @@ fn benchmark_scaling(c: &mut Criterion) {
 
 criterion_group!(
   benches, 
-//   bench_update_degree, 
-  bench_from_rou_evals,
+  bench_update_degree, 
+//   bench_from_rou_evals,
 //   bench_resize,
   // bench_polynomial_mul,
   // bench_div_by_vanishing,

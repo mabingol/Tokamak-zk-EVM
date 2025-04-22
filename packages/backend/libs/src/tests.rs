@@ -16,6 +16,7 @@ mod tests {
 
     use super::*;
     use crate::conversion::Conversion;
+    use crate::polynomials_ep::{BivariatePolynomialEP, DensePolynomialExtEP};
     use crate::vector_operations::{*};
     use crate::bivariate_polynomial::{DensePolynomialExt, BivariatePolynomial};
 
@@ -209,6 +210,27 @@ mod tests {
         assert_eq!(result.get_coeff(1, 1), ScalarField::from_u32(0) - ScalarField::from_u32(4));
     }
 
+    #[test]
+    fn update_degree_general_case() {
+        // (row=2, col=1) 그리고 (row=3, col=4) 에도 non-zero가 있다고 가정
+        let x_size = 8;
+        let y_size = 8;
+        let mut coeffs = vec![ScalarField::zero(); x_size * y_size];
+        // 두 개의 non-zero 위치
+        coeffs[3 * y_size + 5] = ScalarField::one();
+        coeffs[6 * y_size + 2] = ScalarField::one();
+        let slice = HostSlice::from_slice(&coeffs);
+        let mut p = DensePolynomialExtEP::from_coeffs(slice, x_size, y_size);
+
+        // update_degree 호출
+        p.update_degree();
+
+        // 행 방향으로 가장 높은 non-zero는 row=3,
+        // 열 방향으로 가장 높은 non-zero는 col=4
+        assert_eq!(p.x_degree, 6, "최대 non-zero 행 인덱스");
+        assert_eq!(p.y_degree, 5, "최대 non-zero 열 인덱스");
+    }
+
 
     #[test]
     fn test_get_univariate_polynomial() { // pass
@@ -345,7 +367,7 @@ mod tests {
         println!("ark_g1_point: {:?}", ark_g1_point);
         println!("ark_g2_point: {:?}", ark_g2_point);
         let pairing_result = Bls12_381::pairing(ark_g1_point, ark_g2_point);
-        // println!("pairing_result: {:?}", pairing_result);
+        println!("pairing_result: {:?}", pairing_result);
         if Conversion::verify_bilinearity(ark_g1_point, ark_g2_point) {
             println!("Bilinearity verified: e(2*G1, G2) == e(G1, G2)^2");
         } else {

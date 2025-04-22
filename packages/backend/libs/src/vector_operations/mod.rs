@@ -247,6 +247,59 @@ pub fn outer_product_two_vecs_rayon(col_vec: &[ScalarField], row_vec: &[ScalarFi
     }
 }
 
+pub fn outer_product_two_vecs_ep(col_vec: &Box<[ScalarField]>, row_vec: &Box<[ScalarField]>, res: &mut Box<[ScalarField]>) {
+    if col_vec.len() * row_vec.len() != res.len() {
+        panic!("Insufficient buffer length");
+    }
+
+    let col_len = col_vec.len();
+    let row_len = row_vec.len();
+    let vec_ops_cfg = VecOpsConfig::default();
+    
+    let min_len = std::cmp::min(row_len, col_len);
+    let max_len = std::cmp::max(row_len, col_len);
+    let max_dir = max_len == row_len;
+    
+    let base_vec = if max_dir { row_vec } else { col_vec };
+    let mut res_untransposed = vec![ScalarField::zero(); res.len()].into_boxed_slice();
+    
+    let mul_program = FieldProgram::new(
+        |vars: &mut Vec<FieldSymbol>| {
+            
+            vars[2] = vars[0] * vars[1];
+        },
+        3
+    ).unwrap();
+    
+    for ind in 0..min_len {
+        let scaler = if max_dir { col_vec[ind] } else { row_vec[ind] };
+        let scaler_vec = vec![scaler; max_len].into_boxed_slice();
+        let mut res_vec = vec![ScalarField::zero(); max_len].into_boxed_slice();
+        
+        let mut parameters = vec![
+            HostSlice::from_slice(&scaler_vec), 
+            HostSlice::from_slice(&base_vec),
+            HostSlice::from_mut_slice(&mut res_vec)
+        ];
+        
+        execute_program(&mut parameters, &mul_program, &vec_ops_cfg).unwrap();
+        
+        res_untransposed[ind * max_len..(ind + 1) * max_len].copy_from_slice(&res_vec);
+    }
+    
+    if !max_dir {
+        transpose_matrix(
+            HostSlice::from_slice(&res_untransposed),
+            min_len as u32,
+            max_len as u32,
+            HostSlice::from_mut_slice(res),
+            &vec_ops_cfg
+        ).unwrap();
+    } else {
+        res.clone_from(&res_untransposed);
+    }
+}
+
 pub fn extend_monomial_vec (
     mono_vec: &[ScalarField],
     res: &mut [ScalarField],
@@ -326,18 +379,18 @@ pub fn scaled_outer_product_ep(
     } else {
         scaled_vec.clone_from(col_vec);
     }
-    outer_product_two_vecs(
+    outer_product_two_vecs_ep(
         &scaled_vec, 
         row_vec, 
         res
     );
-    let mut scaled_vec = vec![ScalarField::zero(); col_size];
+    let mut scaled_vec = vec![ScalarField::zero(); col_size].into_boxed_slice();
     if let Some(_scaler) = scaler {
         scale_vec(*_scaler, col_vec, &mut scaled_vec);
     } else {
         scaled_vec.clone_from_slice(col_vec);
     }
-    outer_product_two_vecs(
+    outer_product_two_vecs_ep(
         &scaled_vec,
         row_vec, 
         res
