@@ -30,12 +30,12 @@ ark-ff = "0.5.0"
 #name = "bench_polynomial_division"
 #harness = false
 
-[[bench]]
-name = "bench_polynomials"
-harness = false
-
 #[[bench]]
-#name = "bench_scaled_outer_product"
+#name = "bench_polynomials"
 #harness = false
+
+[[bench]]
+name = "bench_scaled_outer_product"
+harness = false
 
 

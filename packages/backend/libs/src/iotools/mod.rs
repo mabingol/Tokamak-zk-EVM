@@ -4,6 +4,7 @@ use icicle_core::traits::{Arithmetic, FieldImpl, GenerateRandom};
 use icicle_core::vec_ops::{VecOps, VecOpsConfig};
 use icicle_runtime::stream::IcicleStream;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, IntoParallelRefMutIterator, ParallelIterator};
+use rayon::slice::{ParallelSlice, ParallelSliceMut};
 use crate::group_structures::{Sigma, Sigma1, Sigma2};
 use crate::bivariate_polynomial::{BivariatePolynomial, DensePolynomialExt};
 use crate::vector_operations::transpose_inplace;
@@ -604,53 +605,6 @@ pub fn from_coef_vec_to_g1serde_vec(coef: &Box<[ScalarField]>, gen: &G1Affine, r
     // println!("Number of nonzero coefficients: {:?}", coef.len() - nzeros);
 }
 
-// pub fn from_coef_vec_to_g1serde_vec_modified(
-//     coef: &Box<[ScalarField]>,
-//     generator: &G1Affine,
-//     result: &mut Box<[G1serde]>,
-// ) {
-//     let len = coef.len();
-//     assert_eq!(result.len(), len, "Buffer length must match coefficient length.");
-
-//     // Host to device: scalar slice
-//     let scalars_host = HostSlice::from_slice(coef.as_ref());
-
-//     // Create generator vector on host once and convert it to a slice
-//     let points_host = vec![*generator; len].into_boxed_slice();
-//     let points_host = HostSlice::from_slice(&points_host);
-
-//     // Allocate result buffer on device
-//     let mut result_dev = DeviceVec::<G1Projective>::device_malloc(len).unwrap();
-
-//     // Configure and execute MSM
-//     let mut msm_config = msm::MSMConfig::default();
-//     let stream = IcicleStream::create().unwrap();
-//     msm_config.is_async = true;
-//     msm_config.stream_handle = *stream;
-
-//     msm::msm(
-//         scalars_host,        // &[ScalarField]
-//         points_host,         // &[G1Projective]
-//         &msm_config,
-//         &mut result_dev[..], // &mut DeviceSlice<G1Projective>
-//     )
-//     .unwrap();
-//     stream.synchronize().unwrap();
-
-//     // Copy device result to host
-//     let mut host_result = vec![G1Projective::zero(); len];
-//     result_dev
-//         .copy_to_host(HostSlice::from_mut_slice(&mut host_result))
-//         .unwrap();
-
-//     // Convert projective to affine in parallel
-//     host_result
-//         .into_par_iter()
-//         .zip(result.par_iter_mut())
-//         .for_each(|(projective, slot)| {
-//             *slot = G1serde(G1Affine::from(projective));
-//         });
-// }
 
 pub fn from_coef_vec_to_g1serde_mat(coef: &Box<[ScalarField]>, r_size: usize, c_size: usize, gen: &G1Affine, res: &mut Box<[Box<[G1serde]>]>) {
     if res.len() != r_size || res.len() == 0 {

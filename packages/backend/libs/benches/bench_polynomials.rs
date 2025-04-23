@@ -130,7 +130,7 @@ fn bench_from_rou_evals(c: &mut Criterion) {
         ))
     });
     
-    group.bench_function("execute_program_x_coset", |b| {
+    group.bench_function("rayon_x_coset", |b| {
         b.iter(|| DensePolynomialExtEP::from_rou_evals(
             black_box(HostSlice::from_slice(&small_evals)),
             black_box(small_x),
@@ -151,7 +151,7 @@ fn bench_from_rou_evals(c: &mut Criterion) {
         ))
     });
     
-    group.bench_function("execute_program_y_coset", |b| {
+    group.bench_function("rayon_y_coset", |b| {
         b.iter(|| DensePolynomialExtEP::from_rou_evals(
             black_box(HostSlice::from_slice(&small_evals)),
             black_box(small_x),
@@ -171,7 +171,7 @@ fn bench_from_rou_evals(c: &mut Criterion) {
         ))
     });
     
-    group.bench_function("execute_program_both_cosets", |b| {
+    group.bench_function("rayon_both_cosets", |b| {
         b.iter(|| DensePolynomialExtEP::from_rou_evals(
             black_box(HostSlice::from_slice(&small_evals)),
             black_box(small_x),
@@ -200,7 +200,7 @@ fn bench_from_rou_evals(c: &mut Criterion) {
         ))
     });
     
-    group.bench_function("execute_program_both_cosets", |b| {
+    group.bench_function("rayon_both_cosets", |b| {
         b.iter(|| DensePolynomialExtEP::from_rou_evals(
             black_box(HostSlice::from_slice(&medium_evals)),
             black_box(medium_x),
@@ -231,7 +231,7 @@ fn bench_from_rou_evals(c: &mut Criterion) {
         ))
     });
     
-    group.bench_function("execute_program_both_cosets", |b| {
+    group.bench_function("rayon_both_cosets", |b| {
         b.iter(|| DensePolynomialExtEP::from_rou_evals(
             black_box(HostSlice::from_slice(&large_evals)),
             black_box(large_x),
@@ -260,7 +260,7 @@ fn bench_from_rou_evals(c: &mut Criterion) {
         ))
     });
     
-    group.bench_function("execute_program_both_cosets", |b| {
+    group.bench_function("rayon_both_cosets", |b| {
         b.iter(|| DensePolynomialExtEP::from_rou_evals(
             black_box(HostSlice::from_slice(&unbalanced_evals)),
             black_box(unbalanced_x),
@@ -677,27 +677,6 @@ fn bench_to_rou_evals(c: &mut Criterion) {
   
   let mut group = c.benchmark_group("to_rou_evals_small");
   
-  // 코셋 없음
-  group.bench_function("original_no_coset", |b| {
-      b.iter_batched(
-          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
-          |mut evals| {
-              small_poly.to_rou_evals(None, None, &mut evals);
-          },
-          BatchSize::SmallInput,
-      )
-  });
-  
-  group.bench_function("execute_program_no_coset", |b| {
-      b.iter_batched(
-          || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
-          |mut evals| {
-              small_poly_ep.to_rou_evals(None, None, &mut evals);
-          },
-          BatchSize::SmallInput,
-      )
-  });
-  
   // X 코셋만
   group.bench_function("original_x_coset", |b| {
       b.iter_batched(
@@ -709,7 +688,7 @@ fn bench_to_rou_evals(c: &mut Criterion) {
       )
   });
   
-  group.bench_function("execute_program_x_coset", |b| {
+  group.bench_function("rayon_x_coset", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
           |mut evals| {
@@ -730,7 +709,7 @@ fn bench_to_rou_evals(c: &mut Criterion) {
       )
   });
   
-  group.bench_function("execute_program_y_coset", |b| {
+  group.bench_function("rayon_y_coset", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
           |mut evals| {
@@ -751,7 +730,7 @@ fn bench_to_rou_evals(c: &mut Criterion) {
       )
   });
   
-  group.bench_function("execute_program_both_cosets", |b| {
+  group.bench_function("rayon_both_cosets", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
           |mut evals| {
@@ -781,7 +760,7 @@ fn bench_to_rou_evals(c: &mut Criterion) {
       )
   });
   
-  group.bench_function("execute_program_both_cosets", |b| {
+  group.bench_function("rayon_both_cosets", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(medium_x * medium_y).unwrap(),
           |mut evals| {
@@ -811,7 +790,7 @@ fn bench_to_rou_evals(c: &mut Criterion) {
       )
   });
   
-  group.bench_function("execute_program_both_cosets", |b| {
+  group.bench_function("rayon_both_cosets", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(large_x * large_y).unwrap(),
           |mut evals| {
@@ -841,7 +820,7 @@ fn bench_to_rou_evals(c: &mut Criterion) {
       )
   });
   
-  group.bench_function("execute_program_both_cosets", |b| {
+  group.bench_function("rayon_both_cosets", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(unbalanced_x * unbalanced_y).unwrap(),
           |mut evals| {
@@ -871,7 +850,7 @@ fn bench_to_rou_evals(c: &mut Criterion) {
       )
   });
   
-  group.bench_function("execute_program_both_cosets", |b| {
+  group.bench_function("rayon_both_cosets", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(very_large_x * very_large_y).unwrap(),
           |mut evals| {
@@ -952,7 +931,6 @@ fn benchmark_scaling(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(5);
     
-    // X 크기 스케일링 (Y 고정)
     let fixed_y = 8;
     for x_size in &x_sizes {
         let coeffs = ScalarCfg::generate_random(*x_size * fixed_y);
@@ -976,7 +954,6 @@ fn benchmark_scaling(c: &mut Criterion) {
         );
     }
     
-    // Y 크기 스케일링 (X 고정)
     let fixed_x = 8;
     for y_size in &y_sizes {
         let coeffs = ScalarCfg::generate_random(fixed_x * *y_size);
@@ -1006,12 +983,12 @@ fn benchmark_scaling(c: &mut Criterion) {
 
 criterion_group!(
   benches, 
-  bench_update_degree, 
+//   bench_update_degree, 
 //   bench_from_rou_evals,
 //   bench_resize,
   // bench_polynomial_mul,
   // bench_div_by_vanishing,
-//   bench_to_rou_evals,
+  bench_to_rou_evals,
 //   benchmark_compare_implementations
 );
 criterion_main!(benches);
