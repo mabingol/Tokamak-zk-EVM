@@ -2,7 +2,7 @@ use icicle_bls12_381::curve::{ScalarField, ScalarCfg};
 use icicle_core::traits::{Arithmetic, FieldConfig, FieldImpl, GenerateRandom};
 use icicle_core::polynomials::UnivariatePolynomial;
 use icicle_bls12_381::symbol::bls12_381::FieldSymbol;
-use icicle_core::ntt;
+use icicle_core::ntt::{self, NTTConfig, NTTDir, NTTInitDomainConfig};
 // use icicle_core::symbol::Symbol;
 // Remove local enum definition since we want to use the one from icicle_core
 // use icicle_core::program::PreDefinedProgram;
@@ -857,39 +857,109 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
         self.resize(target_x_size, target_y_size);
     }
 
-    fn mul_monomial(&self, x_exponent: usize, y_exponent: usize) -> Self {
-       if x_exponent == 0 && y_exponent == 0 {
-            self.clone()
-        } else {
-            let mut orig_coeffs_vec = Vec::<Self::Field>::with_capacity(self.x_size * self.y_size);
-            unsafe{orig_coeffs_vec.set_len(self.x_size * self.y_size);}
-            let orig_coeffs = HostSlice::from_mut_slice(&mut orig_coeffs_vec);
-            self.copy_coeffs(0, orig_coeffs);
-
-            let target_x_size = self.x_degree as usize + x_exponent + 1;
-            let target_y_size = self.y_degree as usize + y_exponent + 1;
-            let (new_x_size, new_y_size) = _find_size_as_twopower(target_x_size, target_y_size);
-            let new_size: usize = new_x_size * new_y_size;
-            
-            let mut res_coeffs_vec = vec![Self::Field::zero(); new_size];
-            for i in 0 .. self.y_size {
-                res_coeffs_vec[new_x_size * (i + y_exponent) + x_exponent .. new_x_size * (i + y_exponent) + self.x_size + x_exponent].copy_from_slice(
-                    &orig_coeffs_vec[self.x_size * i .. self.x_size * (i+1)]
-                );
-            }
-
-            let res_coeffs = HostSlice::from_slice(&res_coeffs_vec);
-            
-            DensePolynomialExtEP::from_coeffs(res_coeffs, new_x_size, new_y_size)
+    fn mul_monomial(&self, x_exp: usize, y_exp: usize) -> Self {
+        // (0) 특별 케이스: x^0 y^0
+        if x_exp == 0 && y_exp == 0 {
+            return self.clone();
         }
+
+        let x_size = self.x_size;
+        let y_size = self.y_size;
+
+        // (1) 원본 계수 한 번만 호스트에 복사
+        let total = x_size * y_size;
+        let mut orig_coeffs = vec![ScalarField::zero(); total];
+        {
+            let host_slice = HostSlice::from_mut_slice(&mut orig_coeffs);
+            self.copy_coeffs(0, host_slice);
+        }
+
+        // (2) 출력 크기 결정 (power-of-two 올림)
+        let target_x = (self.x_degree as usize) + x_exp + 1;
+        let target_y = (self.y_degree as usize) + y_exp + 1;
+        let new_x = next_pow2(target_x);
+        let new_y = next_pow2(target_y);
+        let new_total = new_x * new_y;
+
+        // (3) 결과 버퍼 한 번만 할당
+        let mut result = vec![ScalarField::zero(); new_total];
+
+        // (4) 병렬 복사: 각 행(row) 단위로 처리
+        result
+            .par_chunks_mut(new_y)
+            .enumerate()
+            .for_each(|(new_i, row_chunk)| {
+                // orig_row = new_i - x_exp
+                if let Some(orig_i) = new_i.checked_sub(x_exp) {
+                    if orig_i < x_size {
+                        let src_start = orig_i * y_size;
+                        let src = &orig_coeffs[src_start..src_start + y_size];
+                        // 열 오프셋 y_exp 위치에 한 번에 복사
+                        row_chunk[y_exp..y_exp + y_size].copy_from_slice(src);
+                    }
+                }
+            });
+
+        // (5) 한 번의 from_coeffs 호출로 디바이스 전송
+        let host_slice = HostSlice::from_slice(&result);
+        DensePolynomialExtEP::from_coeffs(host_slice, new_x, new_y)
     }
 
+    // fn mul_monomial(&self, x_exp: usize, y_exp: usize) -> Self {
+    //     // 1) 원본 크기, 목표 크기 계산 (비교를 위해 power-of-two 로 둡니다)
+    //     let target_x = self.x_degree as usize + x_exp + 1;
+    //     let target_y = self.y_degree as usize + y_exp + 1;
+    //     let new_x_size = target_x.next_power_of_two();
+    //     let new_y_size = target_y.next_power_of_two();
+    //     let new_size = new_x_size * new_y_size;
+
+    //     // 2) 호스트에서 “시프트된” 계수 벡터 만들기
+    //     //    - 먼저 원본 계수를 host_coeffs 에 복사
+    //     let old_size = self.x_size * self.y_size;
+    //     let mut host_coeffs = vec![Self::Field::zero(); old_size];
+    //     {
+    //         let mut hs = HostSlice::from_mut_slice(&mut host_coeffs);
+    //         self.copy_coeffs(0, hs);
+    //     }
+    //     //    - shift offset 계산 (1차원 인덱스)
+    //     let offset = x_exp * new_y_size + y_exp;
+    //     //    - 새로운 호스트 버퍼에 0 으로 채운 뒤, offset 부터 복사
+    //     let mut shifted = vec![Self::Field::zero(); new_size];
+    //     shifted[offset .. offset + old_size].copy_from_slice(&host_coeffs);
+
+    //     // 3) 디바이스로 복사
+    //     let mut padded_dev = DeviceVec::<Self::Field>::device_malloc(new_size).unwrap();
+    //     padded_dev
+    //         .copy_from_host(HostSlice::from_slice(&shifted))
+    //         .unwrap();
+
+    //     // 4) 결과를 받을 DeviceVec (초기값은 상관없음)
+    //     let mut out_dev = DeviceVec::<Self::Field>::device_malloc(new_size).unwrap();
+
+    //     // 5) “항등 λ” 프로그램 생성 (params[1] = params[0])
+    //     let id_prog = FieldProgram::new(
+    //         |vars: &mut Vec<FieldSymbol>| {
+    //             vars[1] = vars[0];
+    //         },
+    //         2, // input, output
+    //     )
+    //     .unwrap();
+
+    //     // 6) execute_program 으로 디바이스 상에서 복사 수행
+    //     let mut args: Vec<&dyn HostOrDeviceSlice<Self::Field>> =
+    //         vec![&padded_dev, &mut out_dev];
+    //     let cfg = VecOpsConfig::default();
+    //     execute_program(&mut args, &id_prog, &cfg).unwrap();
+
+    //     // 7) 결과로 새 BivarPolynomialEP 구성
+    //     DensePolynomialExtEP::from_coeffs(&out_dev, new_x_size, new_y_size)
+    // }
+
+
+
     fn _mul(&self, rhs: &Self) -> Self {
-        // 특수 케이스 처리
         let (lhs_x_degree, lhs_y_degree) = self.degree();
         let (rhs_x_degree, rhs_y_degree) = rhs.degree();
-        
-        // 상수 다항식 처리
         if lhs_x_degree + lhs_y_degree == 0 && rhs_x_degree + rhs_y_degree > 0 {
             return &(rhs.clone()) * &(self.get_coeff(0, 0));
         }
@@ -901,84 +971,26 @@ impl BivariatePolynomialEP for DensePolynomialExtEP {
             let out_coeffs = HostSlice::from_slice(&out_coeffs_vec);
             return DensePolynomialExtEP::from_coeffs(out_coeffs, 1, 1);
         }
-        
-        // 곱셈 후 예상 차수 계산
-        let x_degree = lhs_x_degree + rhs_x_degree;
-        let y_degree = lhs_y_degree + rhs_y_degree;
-        let target_x_size = x_degree as usize + 1;
-        let target_y_size = y_degree as usize + 1;
-        
-        // 크기 조정
+        let target_x_size = self.x_size + rhs.x_size - 1;
+        let target_y_size = self.y_size + rhs.y_size - 1;
         let mut lhs_ext = self.clone();
         let mut rhs_ext = rhs.clone();
         lhs_ext.resize(target_x_size, target_y_size);
         rhs_ext.resize(target_x_size, target_y_size);
-        
         let x_size = lhs_ext.x_size;
         let y_size = lhs_ext.y_size;
         let extended_size = x_size * y_size;
-        
-        // execute_program을 사용한 FFT 기반 곱셈 구현
-        
-        // 1. 계수에서 평가값으로 변환 (FFT)
-        let mut lhs_evals = DeviceVec::<ScalarField>::device_malloc(extended_size).unwrap();
-        let mut rhs_evals = DeviceVec::<ScalarField>::device_malloc(extended_size).unwrap();
-        
-        // FFT 계산 (기존 코드 재사용)
+        let cfg_vec_ops = VecOpsConfig::default();
+
+        let mut lhs_evals = DeviceVec::<Self::Field>::device_malloc(extended_size).unwrap();
+        let mut rhs_evals = DeviceVec::<Self::Field>::device_malloc(extended_size).unwrap();
         lhs_ext.to_rou_evals(None, None, &mut lhs_evals);
         rhs_ext.to_rou_evals(None, None, &mut rhs_evals);
-        
-        // 2. 배치 단위로 원소별 곱셈 수행
-        // pointwise 곱셈을 위한 FieldProgram 정의
-        let pointwise_mul_program = FieldProgram::new(
-            |symbols: &mut Vec<FieldSymbol>| {
-                // 원소별 곱셈 수행
-                symbols[2] = symbols[0] * symbols[1];
-            },
-            3 // 입력 A, 입력 B, 출력 C
-        ).unwrap();
-        
-        let vec_ops_cfg = VecOpsConfig::default();
-        
-        // 2-a. HostSlice로 lhs_evals와 rhs_evals 가져오기
-        let mut lhs_evals_host = vec![ScalarField::zero(); extended_size];
-        let mut rhs_evals_host = vec![ScalarField::zero(); extended_size];
-        lhs_evals.copy_to_host(HostSlice::from_mut_slice(&mut lhs_evals_host)).unwrap();
-        rhs_evals.copy_to_host(HostSlice::from_mut_slice(&mut rhs_evals_host)).unwrap();
-        
-        // 2-b. 결과 저장 공간 할당
-        let mut result_evals_host = vec![ScalarField::zero(); extended_size];
-        
-        // 2-c. 배치 크기 정의 (최적의 배치 크기는 하드웨어에 따라 다름)
-        let batch_size = 1024; // 적절한 배치 크기 선택
-        
-        // 2-d. 배치 단위로 pointwise 곱셈 수행
-        for start_idx in (0..extended_size).step_by(batch_size) {
-            let end_idx = std::cmp::min(start_idx + batch_size, extended_size);
-            let current_batch_size = end_idx - start_idx;
-            
-            // 현재 배치의 입력 슬라이스
-            let lhs_batch = &lhs_evals_host[start_idx..end_idx];
-            let rhs_batch = &rhs_evals_host[start_idx..end_idx];
-            
-            // 현재 배치의 출력 슬라이스
-            let result_batch = &mut result_evals_host[start_idx..end_idx];
-            
-            // 배치에 대한 pointwise 곱셈 수행
-            let mut parameters = vec![
-                HostSlice::from_slice(lhs_batch),
-                HostSlice::from_slice(rhs_batch),
-                HostSlice::from_mut_slice(result_batch)
-            ];
-            
-            execute_program(&mut parameters, &pointwise_mul_program, &vec_ops_cfg).unwrap();
-        }
-        
-        // 3. 결과 DeviceVec 생성 및 데이터 복사
-        let mut out_evals = DeviceVec::<ScalarField>::device_malloc(extended_size).unwrap();
-        out_evals.copy_from_host(HostSlice::from_slice(&result_evals_host)).unwrap();
-        
-        // 4. IFFT를 사용하여 결과 계수 계산
+
+        // Element-wise mult. of evaluations
+        let mut out_evals = DeviceVec::<Self::Field>::device_malloc(extended_size).unwrap();
+        ScalarCfg::mul(&lhs_evals, &rhs_evals, &mut out_evals, &cfg_vec_ops).unwrap();
+
         DensePolynomialExtEP::from_rou_evals(&out_evals, x_size, y_size, None, None)
     }
 
@@ -1506,4 +1518,8 @@ fn next_power_of_two(n: usize) -> usize {
         return 1;
     }
     1 << (usize::BITS - (n - 1).leading_zeros())
+}
+
+fn next_pow2(n: usize) -> usize {
+    if n.is_power_of_two() { n } else { 1 << (usize::BITS - n.leading_zeros()) }
 }

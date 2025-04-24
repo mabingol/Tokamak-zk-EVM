@@ -140,7 +140,6 @@ fn bench_from_rou_evals(c: &mut Criterion) {
         ))
     });
     
-    // Y 코셋만
     group.bench_function("original_y_coset", |b| {
         b.iter(|| DensePolynomialExt::from_rou_evals(
             black_box(HostSlice::from_slice(&small_evals)),
@@ -385,7 +384,6 @@ fn bench_resize(c: &mut Criterion) {
 
 
 
-// 벤치마크를 위한 크기 구조체
 #[derive(Copy, Clone, Debug)]
 struct PolynomialSize {
     x_size_1: usize,
@@ -402,7 +400,6 @@ impl std::fmt::Display for PolynomialSize {
     }
 }
 
-// 벤치마크 함수
 fn bench_polynomial_mul(c: &mut Criterion) {
     let sizes = vec![
         PolynomialSize { x_size_1: 8, y_size_1: 8, x_size_2: 8, y_size_2: 8 },
@@ -414,7 +411,6 @@ fn bench_polynomial_mul(c: &mut Criterion) {
     let mut group = c.benchmark_group("Polynomial_Multiplication");
     
     for size in sizes {
-        // 테스트 데이터 준비
         let size_1 = size.x_size_1 * size.y_size_1;
         let size_2 = size.x_size_2 * size.y_size_2;
         
@@ -432,15 +428,12 @@ fn bench_polynomial_mul(c: &mut Criterion) {
         let coeffs_slice_1 = HostSlice::from_slice(&coeffs_1);
         let coeffs_slice_2 = HostSlice::from_slice(&coeffs_2);
         
-        // 원본 다항식 생성
         let poly_1 = DensePolynomialExt::from_coeffs(coeffs_slice_1, size.x_size_1, size.y_size_1);
         let poly_2 = DensePolynomialExt::from_coeffs(coeffs_slice_2, size.x_size_2, size.y_size_2);
         
-        // Execute_program 기반 다항식 생성
         let poly_1_ep = DensePolynomialExtEP::from_coeffs(coeffs_slice_1, size.x_size_1, size.y_size_1);
         let poly_2_ep = DensePolynomialExtEP::from_coeffs(coeffs_slice_2, size.x_size_2, size.y_size_2);
         
-        // 원본 구현 벤치마크
         group.bench_with_input(
             BenchmarkId::new("Original", size), 
             &size,
@@ -448,13 +441,11 @@ fn bench_polynomial_mul(c: &mut Criterion) {
                 b.iter(|| {
                     let binding = poly_1._mul(&poly_2);
                     let result = black_box(&binding);
-                    // 결과 사용하여 최적화 방지
                     black_box(result.x_size + result.y_size)
                 })
             }
         );
         
-        // Execute_program 구현 벤치마크
         group.bench_with_input(
             BenchmarkId::new("ExecuteProgram", size), 
             &size,
@@ -462,7 +453,6 @@ fn bench_polynomial_mul(c: &mut Criterion) {
                 b.iter(|| {
                     let binding = poly_1_ep._mul(&poly_2_ep);
                     let result = black_box(&binding);
-                    // 결과 사용하여 최적화 방지
                     black_box(result.x_size + result.y_size)
                 })
             }
@@ -652,7 +642,6 @@ fn create_test_coefficients(x_size: usize, y_size: usize, num_nonzero: usize) ->
 fn create_test_polynomial2(x_size: usize, y_size: usize, num_nonzero: usize) -> (DensePolynomial, DensePolynomialExt, DensePolynomialExtEP) {
   let mut coeffs = vec![ScalarField::zero(); x_size * y_size];
   
-  // 영이 아닌 계수 추가
   for i in 0..num_nonzero {
       let x = (i * 3) % x_size;
       let y = (i * 7) % y_size;
@@ -666,18 +655,15 @@ fn create_test_polynomial2(x_size: usize, y_size: usize, num_nonzero: usize) -> 
   (dense_poly, biv_poly, biv_poly_ep)
 }
 fn bench_to_rou_evals(c: &mut Criterion) {
-  // 코셋 값 설정
   let coset_x_val = ScalarField::from_u32(7u32);
   let coset_y_val = ScalarField::from_u32(11u32);
   
-  // 작은 크기 벤치마크
   let small_x = 8;
   let small_y = 8;
   let (_, small_poly, small_poly_ep) = create_test_polynomial2(small_x, small_y, 5);
   
   let mut group = c.benchmark_group("to_rou_evals_small");
   
-  // X 코셋만
   group.bench_function("original_x_coset", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
@@ -698,7 +684,6 @@ fn bench_to_rou_evals(c: &mut Criterion) {
       )
   });
   
-  // Y 코셋만
   group.bench_function("original_y_coset", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
@@ -719,7 +704,6 @@ fn bench_to_rou_evals(c: &mut Criterion) {
       )
   });
   
-  // 두 코셋 모두
   group.bench_function("original_both_cosets", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(small_x * small_y).unwrap(),
@@ -742,14 +726,12 @@ fn bench_to_rou_evals(c: &mut Criterion) {
   
   group.finish();
   
-  // 중간 크기 벤치마크
   let medium_x = 16;
   let medium_y = 16;
   let (_, medium_poly, medium_poly_ep) = create_test_polynomial2(medium_x, medium_y, 10);
   
   let mut group = c.benchmark_group("to_rou_evals_medium");
   
-  // 두 코셋 모두
   group.bench_function("original_both_cosets", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(medium_x * medium_y).unwrap(),
@@ -772,14 +754,12 @@ fn bench_to_rou_evals(c: &mut Criterion) {
   
   group.finish();
   
-  // 큰 크기 벤치마크
   let large_x = 32;
   let large_y = 32;
   let (_, large_poly, large_poly_ep) = create_test_polynomial2(large_x, large_y, 20);
   
   let mut group = c.benchmark_group("to_rou_evals_large");
   
-  // 두 코셋 모두
   group.bench_function("original_both_cosets", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(large_x * large_y).unwrap(),
@@ -802,7 +782,6 @@ fn bench_to_rou_evals(c: &mut Criterion) {
   
   group.finish();
   
-  // 불균형 크기 벤치마크
   let unbalanced_x = 8;
   let unbalanced_y = 32;
   let (_, unbalanced_poly, unbalanced_poly_ep) = create_test_polynomial2(unbalanced_x, unbalanced_y, 15);
@@ -832,14 +811,12 @@ fn bench_to_rou_evals(c: &mut Criterion) {
   
   group.finish();
   
-  // 더 큰 크기 벤치마크
   let very_large_x = 64;
   let very_large_y = 64;
   let (_, very_large_poly, very_large_poly_ep) = create_test_polynomial2(very_large_x, very_large_y, 30);
   
   let mut group = c.benchmark_group("to_rou_evals_very_large");
   
-  // 두 코셋 모두
   group.bench_function("original_both_cosets", |b| {
       b.iter_batched(
           || DeviceVec::<ScalarField>::device_malloc(very_large_x * very_large_y).unwrap(),
@@ -980,6 +957,62 @@ fn benchmark_scaling(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_mul_monomial(c: &mut Criterion) {
+    let mut group = c.benchmark_group("mul_monomial");
+
+    // 테스트할 다항식 크기
+    for &size in &[256usize, 512, 1024, 2048] {
+        let n = size * size;
+
+        // 1) 랜덤 계수 생성 및 HostSlice 준비
+        let coeffs: Vec<ScalarField> = ScalarCfg::generate_random(n).into_boxed_slice().into();
+        let host_slice = HostSlice::from_slice(&coeffs);
+
+        // 2) 원본/EP 다항식 생성
+        let poly_orig = DensePolynomialExt::from_coeffs(host_slice, size, size);
+        let poly_ep   = DensePolynomialExtEP::from_coeffs(host_slice, size, size);
+
+        // 3) 벤치마크할 (x_exp, y_exp) 조합
+        let exponents = [
+            (1, 1),
+            (size / 2, size / 2),
+            (size - 1, size - 1),
+        ];
+
+        for &(x_exp, y_exp) in &exponents {
+            // 원본 구현
+            group.bench_with_input(
+                BenchmarkId::new(
+                    format!("{}×{} orig exp {}_{}", size, size, x_exp, y_exp),
+                    ""
+                ),
+                &poly_orig,
+                |b, p| {
+                    b.iter(|| {
+                        black_box(p.mul_monomial(x_exp, y_exp));
+                    })
+                },
+            );
+
+            // execute_program (EP) 구현
+            group.bench_with_input(
+                BenchmarkId::new(
+                    format!("{}×{}   ep exp {}_{}", size, size, x_exp, y_exp),
+                    ""
+                ),
+                &poly_ep,
+                |b, p| {
+                    b.iter(|| {
+                        black_box(p.mul_monomial(x_exp, y_exp));
+                    })
+                },
+            );
+        }
+    }
+
+    group.finish();
+}
+
 
 criterion_group!(
   benches, 
@@ -988,7 +1021,8 @@ criterion_group!(
 //   bench_resize,
   // bench_polynomial_mul,
   // bench_div_by_vanishing,
-  bench_to_rou_evals,
-//   benchmark_compare_implementations
+//   bench_to_rou_evals,
+//   benchmark_compare_implementations,
+    bench_mul_monomial,
 );
 criterion_main!(benches);
