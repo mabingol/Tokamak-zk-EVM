@@ -21,8 +21,36 @@ use serde::ser::{Serializer, SerializeStruct};
 use serde::de::{Deserializer, Visitor, Error};
 use serde_json::{from_reader, to_writer_pretty};
 
-const QAP_COMPILER_PATH_PREFIX: &str = "../frontend/qap-compiler/subcircuits/library";
-const SYNTHESIZER_PATH_PREFIX: &str = "../frontend/synthesizer/examples/outputs";
+// Replace constants with global variables
+static mut QAP_COMPILER_PATH: Option<String> = None;
+static mut SYNTHESIZER_PATH: Option<String> = None;
+
+// Add path setting function
+pub fn set_paths(qap_path: Option<String>, synth_path: Option<String>) {
+    unsafe {
+        QAP_COMPILER_PATH = qap_path;
+        SYNTHESIZER_PATH = synth_path;
+    }
+}
+
+// Path getter function
+fn get_qap_compiler_path() -> String {
+    unsafe {
+        QAP_COMPILER_PATH.clone().unwrap_or_else(|| 
+            std::env::var("QAP_COMPILER_PATH_PREFIX")
+                .unwrap_or_else(|_| "../frontend/qap-compiler/subcircuits/library".to_string())
+        )
+    }
+}
+
+fn get_synthesizer_path() -> String {
+    unsafe {
+        SYNTHESIZER_PATH.clone().unwrap_or_else(|| 
+            std::env::var("SYNTHESIZER_PATH_PREFIX")
+                .unwrap_or_else(|_| "../frontend/synthesizer/examples/outputs".to_string())
+        )
+    }
+}
 
 fn g1_vec_to_code(v: &Box<[G1serde]>) -> String {
     let inner = v.iter()
@@ -61,7 +89,7 @@ pub struct SetupParams {
 
 impl SetupParams {
     pub fn from_path(path: &str) -> io::Result<Self> { 
-        let abs_path = env::current_dir()?.join(QAP_COMPILER_PATH_PREFIX).join(path);
+        let abs_path = env::current_dir()?.join(get_qap_compiler_path()).join(path);
         let file = File::open(abs_path)?;
         let reader = BufReader::new(file);
         let data = from_reader(reader)?;
@@ -189,7 +217,7 @@ pub struct PlacementVariables {
 
 impl PlacementVariables {
     pub fn from_path(path: &str) -> io::Result<Box<[Self]>> {
-        let abs_path = env::current_dir()?.join(SYNTHESIZER_PATH_PREFIX).join(path);
+        let abs_path = env::current_dir()?.join(get_synthesizer_path()).join(path);
         let file = File::open(abs_path)?;
         let reader = BufReader::new(file);
         let box_data: Box<[Self]> = from_reader(reader)?;
@@ -207,7 +235,7 @@ pub struct Permutation {
 
 impl Permutation {
     pub fn from_path(path: &str) -> io::Result<Box<[Self]>> {
-        let abs_path = env::current_dir()?.join(SYNTHESIZER_PATH_PREFIX).join(path);
+        let abs_path = env::current_dir()?.join(get_synthesizer_path()).join(path);
         let file = File::open(abs_path)?;
         let reader = BufReader::new(file);
         let vec_data: Box<[Self]> = from_reader(reader)?;
@@ -252,7 +280,7 @@ pub struct SubcircuitInfo {
 }
 impl SubcircuitInfo {
     pub fn from_path(path: &str) -> io::Result<Box<[Self]>> {
-        let abs_path = env::current_dir()?.join(QAP_COMPILER_PATH_PREFIX).join(path);
+        let abs_path = env::current_dir()?.join(get_qap_compiler_path()).join(path);
         let file = File::open(abs_path)?;
         let reader = BufReader::new(file);
         let vec_data: Vec<Self> = from_reader(reader)?;
@@ -261,7 +289,7 @@ impl SubcircuitInfo {
 }
 
 pub fn read_global_wire_list_as_boxed_boxed_numbers(path: &str) -> io::Result<Box<[Box<[usize]>]>> {
-    let abs_path = env::current_dir()?.join(QAP_COMPILER_PATH_PREFIX).join(path);
+    let abs_path = env::current_dir()?.join(get_qap_compiler_path()).join(path);
     let file = File::open(abs_path)?;
     let reader = BufReader::new(file);
 
@@ -281,7 +309,7 @@ struct Constraints {
 
 impl Constraints {
     fn from_path(path: &str) -> io::Result<Self> {
-        let abs_path = env::current_dir()?.join(QAP_COMPILER_PATH_PREFIX).join(path);
+        let abs_path = env::current_dir()?.join(get_qap_compiler_path()).join(path);
         let file = File::open(abs_path)?;
         let reader = BufReader::new(file);
         let constraints = from_reader(reader)?;

@@ -2,7 +2,7 @@
 use icicle_runtime::memory::HostSlice;
 use icicle_runtime::stream::IcicleStream;
 use libs::bivariate_polynomial::{BivariatePolynomial, DensePolynomialExt};
-use libs::iotools::{PlacementVariables, SetupParams, SubcircuitInfo, SubcircuitR1CS};
+use libs::iotools::{PlacementVariables, SetupParams, SubcircuitInfo, SubcircuitR1CS, set_paths};
 use libs::field_structures::{Tau, from_r1cs_to_evaled_qap_mixture};
 use libs::iotools::{read_global_wire_list_as_boxed_boxed_numbers};
 use libs::polynomial_structures::{gen_aX, gen_bXY, gen_uXY, gen_vXY, gen_wXY};
@@ -13,13 +13,52 @@ use icicle_core::traits::{Arithmetic, FieldImpl, GenerateRandom};
 use icicle_core::ntt;
 use icicle_core::curve::Curve;
 
-use std::{vec, cmp};
+use std::{vec, cmp, env};
 use std::time::Instant;
 use std::fs::File;
 use std::io::Write;
 
 fn main() {
     let start1 = Instant::now();
+    
+    // Process command line arguments
+    let args: Vec<String> = env::args().collect();
+    let mut qap_path = None;
+    let mut synth_path = None;
+    
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--qap-path" => {
+                if i + 1 < args.len() {
+                    qap_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    println!("Error: --qap-path requires a value");
+                    std::process::exit(1);
+                }
+            },
+            "--synth-path" => {
+                if i + 1 < args.len() {
+                    synth_path = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    println!("Error: --synth-path requires a value");
+                    std::process::exit(1);
+                }
+            },
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    
+    // Set paths
+    set_paths(qap_path.clone(), synth_path.clone());
+    
+    // Print path information
+    println!("QAP Compiler Path: {}", qap_path.unwrap_or_else(|| "../frontend/qap-compiler/subcircuits/library".to_string()));
+    println!("Synthesizer Path: {}", synth_path.unwrap_or_else(|| "../frontend/synthesizer/examples/outputs".to_string()));
     
     // Generate random affine points on the elliptic curve (G1 and G2)
     println!("Generating random generator points...");
