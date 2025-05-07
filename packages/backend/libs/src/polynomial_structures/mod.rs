@@ -8,6 +8,61 @@ use crate::field_structures::Tau;
 use crate::vector_operations::{*};
 use std::collections::HashSet;
 
+pub struct QAP{
+    pub u_j_X: Vec<DensePolynomialExt>,
+    pub v_j_X: Vec<DensePolynomialExt>,
+    pub w_j_X: Vec<DensePolynomialExt>
+}
+
+pub fn from_subcircuit_to_QAP(
+    compact_R1CS: &SubcircuitR1CS,
+    setup_params: &SetupParams, 
+    subcircuit_info: &SubcircuitInfo, 
+) -> (Vec<DensePolynomialExt>, Vec<DensePolynomialExt>, Vec<DensePolynomialExt>) {
+    let compact_A_mat = &compact_R1CS.A_compact_col_mat;
+    let compact_B_mat = &compact_R1CS.B_compact_col_mat;
+    let compact_C_mat = &compact_R1CS.C_compact_col_mat;
+    let active_wires_A = &compact_R1CS.A_active_wires;
+    let active_wires_B = &compact_R1CS.B_active_wires;
+    let active_wires_C = &compact_R1CS.C_active_wires;
+    let n = setup_params.n;
+
+    // Reconstruct local u,v,w polynomials
+    let zero_coef_vec = [ScalarField::zero()];
+    let zero_coef = HostSlice::from_slice(&zero_coef_vec);
+    let zero_poly = DensePolynomialExt::from_coeffs(zero_coef, 1, 1);
+    let mut u_j_X = vec![zero_poly.clone(); subcircuit_info.Nwires];
+    let mut v_j_X = vec![zero_poly.clone(); subcircuit_info.Nwires];
+    let mut w_j_X = vec![zero_poly.clone(); subcircuit_info.Nwires];
+
+    let mut ordered_active_wires_A: Vec<usize> = active_wires_A.iter().cloned().collect();
+    ordered_active_wires_A.sort();
+    for (idx_u, &idx_o) in ordered_active_wires_A.iter().enumerate() {
+        let u_j_eval_vec = &compact_A_mat[idx_u * n .. (idx_u+1) * n];
+        let u_j_eval = HostSlice::from_slice(&u_j_eval_vec);
+        let u_j_poly = DensePolynomialExt::from_rou_evals(u_j_eval, n, 1, None, None);
+        u_j_X[idx_o] = u_j_poly;
+    }
+    let mut ordered_active_wires_B: Vec<usize> = active_wires_B.iter().cloned().collect();
+    ordered_active_wires_B.sort();
+    for (idx_v, &idx_o) in ordered_active_wires_B.iter().enumerate() {
+        let v_j_eval_vec = &compact_B_mat[idx_v * n .. (idx_v+1) * n];
+        let v_j_eval = HostSlice::from_slice(&v_j_eval_vec);
+        let v_j_poly = DensePolynomialExt::from_rou_evals(v_j_eval, n, 1, None, None);
+        v_j_X[idx_o] = v_j_poly;
+    }
+    let mut ordered_active_wires_C: Vec<usize> = active_wires_C.iter().cloned().collect();
+    ordered_active_wires_C.sort();
+    for (idx_w, &idx_o) in ordered_active_wires_C.iter().enumerate() {
+        let w_j_eval_vec = &compact_C_mat[idx_w * n .. (idx_w+1) * n];
+        let w_j_eval = HostSlice::from_slice(&w_j_eval_vec);
+        let w_j_poly = DensePolynomialExt::from_rou_evals(w_j_eval, n, 1, None, None);
+        w_j_X[idx_o] = w_j_poly;
+    }
+
+    return (u_j_X, v_j_X, w_j_X)
+}
+
 // pub struct GlobalVariables {
 //     pub placementId: usize,
 //     pub globalIdx: Box<[usize]>,
