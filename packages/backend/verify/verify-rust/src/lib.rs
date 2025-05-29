@@ -7,10 +7,12 @@ use libs::bivariate_polynomial::{BivariatePolynomial, DensePolynomialExt};
 use libs::iotools::{Instance, Permutation, PublicInputBuffer, PublicOutputBuffer, SetupParams, SubcircuitInfo};
 use libs::group_structures::{G1serde, Preprocess, Sigma, SigmaVerify};
 use icicle_bls12_381::curve::{ScalarCfg, ScalarField};
+use icicle_bls12_381::pairing::PairingTargetField;
+// use icicle_core::pairing::pairing;
 use icicle_core::traits::{Arithmetic, FieldImpl, GenerateRandom};
 use icicle_core::ntt;
 use prove::{*};
-use libs::group_structures::pairing;
+use libs::group_structures::{pairing_multi, pairing};
 
 use std::vec;
 
@@ -278,6 +280,15 @@ impl Verifier {
             proof4.Pi_Y * kappa2
             + proof4.M_Y * kappa2.pow(2)
             + proof4.N_Y * kappa2.pow(3);
+        // let left_pair = pairing_multi(
+        //     &[LHS + AUX,    proof0.B,                   proof0.U,                   proof0.V,                   proof0.W                 ],
+        //     &[self.sigma.H, self.sigma.sigma_2.alpha4,  self.sigma.sigma_2.alpha,   self.sigma.sigma_2.alpha2,  self.sigma.sigma_2.alpha3]
+        // );
+        // let right_pair = pairing_multi(
+        //     &[binding.O_inst,            binding.O_mid,          binding.O_prv,              AUX_X,                  AUX_Y               ],
+        //     &[self.sigma.sigma_2.gamma, self.sigma.sigma_2.eta, self.sigma.sigma_2.delta,   self.sigma.sigma_2.x,   self.sigma.sigma_2.y]
+        // );
+
         let left_pair = pairing(
             &[LHS + AUX,    proof0.B,                   proof0.U,                   proof0.V,                   proof0.W                 ],
             &[self.sigma.H, self.sigma.sigma_2.alpha4,  self.sigma.sigma_2.alpha,   self.sigma.sigma_2.alpha2,  self.sigma.sigma_2.alpha3]
@@ -286,6 +297,9 @@ impl Verifier {
             &[binding.O_inst,            binding.O_mid,          binding.O_prv,              AUX_X,                  AUX_Y               ],
             &[self.sigma.sigma_2.gamma, self.sigma.sigma_2.eta, self.sigma.sigma_2.delta,   self.sigma.sigma_2.x,   self.sigma.sigma_2.y]
         );
+
+        // println!("Left pairing: {:?}", left_pairs);
+        // println!("Right pairing: {:?}", right_pair);
         return left_pair.eq(&right_pair)
     }
 
@@ -307,6 +321,15 @@ impl Verifier {
         let AUX_A = 
             proof4.Pi_AX * chi
             + proof4.Pi_AY * zeta;
+
+        // let left_pair = pairing_multi(
+        //     &[LHS_A + AUX_A],
+        //     &[self.sigma.H]
+        // );
+        // let right_pair = pairing_multi(
+        //     &[proof4.Pi_AX,             proof4.Pi_AY],
+        //     &[self.sigma.sigma_2.x,     self.sigma.sigma_2.y]
+        // );
 
         let left_pair = pairing(
             &[LHS_A + AUX_A],
@@ -384,6 +407,15 @@ impl Verifier {
             proof4.Pi_CY
             + proof4.M_Y * kappa2
             + proof4.N_Y * kappa2.pow(2);
+        // let left_pair = pairing_multi(
+        //     &[LHS_C + AUX_C],
+        //     &[self.sigma.H]
+        // );
+        // let right_pair = pairing_multi(
+        //     &[AUX_X,                  AUX_Y               ],
+        //     &[self.sigma.sigma_2.x,   self.sigma.sigma_2.y]
+        // );
+
         let left_pair = pairing(
             &[LHS_C + AUX_C],
             &[self.sigma.H]
@@ -438,14 +470,23 @@ impl Verifier {
             - self.sigma.G * (kappa2 * kappa1.pow(4) * A_eval);
         let AUX_B = 
             proof4.Pi_B * (kappa2 * chi);
-        let left_pair = pairing(
+        let left_pair = pairing_multi(
             &[LHS_B + AUX_B,    proof0.B,                   proof0.U,                   proof0.V,                   proof0.W                 ],
             &[self.sigma.H,     self.sigma.sigma_2.alpha4,  self.sigma.sigma_2.alpha,   self.sigma.sigma_2.alpha2,  self.sigma.sigma_2.alpha3]
         );
-        let right_pair = pairing(
+        let right_pair = pairing_multi(
             &[binding.O_inst,            binding.O_mid,          binding.O_prv,              proof4.Pi_B * kappa2    ],
             &[self.sigma.sigma_2.gamma, self.sigma.sigma_2.eta, self.sigma.sigma_2.delta,   self.sigma.sigma_2.x    ]
         );
+
+        // let left_pair = pairing(
+        //     &[LHS_B + AUX_B,    proof0.B,                   proof0.U,                   proof0.V,                   proof0.W                 ],
+        //     &[self.sigma.H,     self.sigma.sigma_2.alpha4,  self.sigma.sigma_2.alpha,   self.sigma.sigma_2.alpha2,  self.sigma.sigma_2.alpha3]
+        // );
+        // let right_pair = pairing(
+        //     &[binding.O_inst,            binding.O_mid,          binding.O_prv,              proof4.Pi_B * kappa2    ],
+        //     &[self.sigma.sigma_2.gamma, self.sigma.sigma_2.eta, self.sigma.sigma_2.delta,   self.sigma.sigma_2.x    ]
+        // );
         return left_pair.eq(&right_pair)
     }
 

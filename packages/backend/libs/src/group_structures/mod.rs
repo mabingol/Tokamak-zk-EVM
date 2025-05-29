@@ -6,12 +6,17 @@ use ark_bls12_381::{Bls12_381, G1Affine as ArkG1Affine, G2Affine as ArkG2Affine}
 use ark_ec::{pairing::Pairing, AffineRepr, CurveGroup};
 use ark_ff::{Field, PrimeField, Fp12};
 use icicle_runtime::memory::HostSlice;
+use rayon::result;
 use crate::bivariate_polynomial::{DensePolynomialExt, BivariatePolynomial};
 use crate::field_structures::{FieldSerde, Tau};
 use crate::iotools::{from_coef_vec_to_g1serde_mat, from_coef_vec_to_g1serde_vec, scaled_outer_product_1d, scaled_outer_product_2d, Permutation, PlacementVariables, SetupParams, SubcircuitInfo, SubcircuitR1CS};
 use crate::vector_operations::{*};
+use icicle_core::pairing::pairing as icicle_pairing;
+use icicle_bls12_381::pairing::PairingTargetField;
+use num_bigint::BigUint;
 
 use serde::{Deserialize, Serialize};
+
 use std::{
     ops::{Add, Mul, Sub},
 };
@@ -134,6 +139,40 @@ pub fn pairing(lhs: &[G1serde], rhs: &[G2serde]) -> PairingOutput<Bls12_381> {
         lhs_ark, 
         rhs_ark
     )
+}
+
+pub fn pairing_multi(lhs: &[G1serde], rhs: &[G2serde]) -> PairingTargetField {
+    if lhs.len() != rhs.len() {
+        panic!("Length mismatch between G1 and G2 elements");
+    }
+
+    if lhs.is_empty() {
+        return PairingTargetField::one();
+    }
+
+    let mut result = icicle_pairing(&lhs[0].0, &rhs[0].0).unwrap();
+
+    for i in 1..lhs.len() {
+        let pairing_result = icicle_pairing(&lhs[i].0, &rhs[i].0).unwrap();
+        result = field_multiply(&result, &pairing_result);
+    }
+    println!("Pairing result: {:?}", result);
+    result
+}
+
+fn field_multiply(a: &PairingTargetField, b: &PairingTargetField) -> PairingTargetField {
+    let a_bytes = a.to_bytes_le();
+    let b_bytes = b.to_bytes_le();
+    
+    let a_big = BigUint::from_bytes_le(&a_bytes);
+    let b_big = BigUint::from_bytes_le(&b_bytes);
+    
+    let result_big = a_big * b_big;
+    
+    let result_bytes = result_big.to_bytes_le();
+    // result_bytes.resize(a_bytes.len(), 0);
+    
+    PairingTargetField::from_bytes_le(&result_bytes)
 }
 
 /// CRS (Common Reference String) structure
