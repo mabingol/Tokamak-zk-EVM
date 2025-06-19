@@ -20,7 +20,7 @@ Here replace the **blockhash** value with a data that is not predictable inadvan
 For initialization (compressed form):
 ```bash
  cargo run --release --bin phase1_initialize -- \
-  --s-max 128 \
+  --s-max 256 \
   --mode testing \
   --setup-params-file setupParams.json  \
   --outfolder ./setup/mpc-setup/output \
