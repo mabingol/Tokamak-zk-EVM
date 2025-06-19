@@ -24,7 +24,7 @@ For initialization (compressed form):
   --mode testing \
   --setup-params-file setupParams.json  \
   --outfolder ./setup/mpc-setup/output \
-  --compress true
+  --compress false
 ```
 
 ## Options:

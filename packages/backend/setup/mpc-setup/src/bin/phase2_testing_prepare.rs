@@ -7,11 +7,11 @@ use libs::field_structures::{from_r1cs_to_evaled_qap_mixture, Tau};
 use libs::iotools::read_global_wire_list_as_boxed_boxed_numbers;
 use libs::iotools::{SetupParams, SubcircuitInfo, SubcircuitR1CS};
 use libs::vector_operations::gen_evaled_lagrange_bases;
-use mpc_setup::conversions::icicle_g1_generator;
+use mpc_setup::conversions::{icicle_g1_generator, icicle_g2_generator};
 use mpc_setup::sigma::{save_contributor_info, SigmaV2, HASH_BYTES_LEN};
 use std::time::Instant;
 use std::{env, vec};
-use mpc_setup::utils::load_gpu_if_possible;
+use mpc_setup::utils::{hash_sigma, load_gpu_if_possible};
 
 //cargo run --release --bin phase2_testing_prepare
 fn main() {
@@ -27,7 +27,7 @@ fn main() {
 
     // Generate random affine points on the elliptic curve (G1 and G2)
     let g1_gen = icicle_g1_generator();//CurveCfg::generate_random_affine_points(1)[0];
-    let g2_gen = G2CurveCfg::generate_random_affine_points(1)[0];
+    let g2_gen = icicle_g2_generator().0;
 
     // Generate a random secret parameter tau (x and y only, no z as per the paper)
     let mut tau = Tau::gen();
@@ -90,7 +90,7 @@ fn main() {
     let global_wire_list = read_global_wire_list_as_boxed_boxed_numbers(global_wire_file_name).unwrap();
 
     // ------------------- Generate Polynomial Evaluations -------------------
- 
+
     // Compute k_evaled_vec: Lagrange polynomial evaluations at τ.x of size m_I
     let mut k_evaled_vec = vec![ScalarField::zero(); m_i].into_boxed_slice();
     gen_evaled_lagrange_bases(&tau.x, m_i, &mut k_evaled_vec);
@@ -168,6 +168,7 @@ fn main() {
         &g2_gen
     );
 
+    println!("hash of sigma {:?}", hex::encode(mpc_setup::utils::hash_sigma(&sigma)));
 
     // Writing the sigma into JSON
     let mut output_path: &str;
