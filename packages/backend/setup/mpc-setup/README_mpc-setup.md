@@ -38,7 +38,7 @@ For initialization (compressed form):
 It should be *64 hexadecimal characters* (eg: for 901,620th Bitcoin Block
 0000000000000000000111043d2144755ed8bdf0c6a91fa292d3e544ebee963b)
 
-🔄 **Next Contributor Phase-1** (40~60 minutes)
+🔄 **Next Contributor Phase-1** (~60 minutes)
 
 Each next contributor in Phase-1 runs *phase1_next_contributor*.
 For testing mode run:
