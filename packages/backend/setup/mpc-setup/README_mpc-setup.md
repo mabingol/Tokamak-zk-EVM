@@ -55,7 +55,7 @@ Optionally, you can add extra entropy from unpredictable deterministic inputs (l
 cargo run --release --bin phase1_next_contributor -- --outfolder ./setup/mpc-setup/output --mode beacon
 ```
 
-✅ **Batch Verification** (30 mins to a couple of hours based on the number participants)
+✅ **Phase-1 Batch Verification** (30 mins to a couple of hours based on the number participants)
 
 Each "Next Contributor's execution" includes verification of the previous contributor automatically, but for batch verification of all contributions run:
 ```bash
@@ -83,6 +83,12 @@ Each next contributor in Phase-2 runs:
 cargo run --release --bin phase2_next_contributor -- --outfolder ./setup/mpc-setup/output --mode random
 ```
 
+✅ **Phase-2 Batch Verification** (30 mins to a couple of hours based on the number participants)
+Each "Next Contributor's execution" includes verification of the previous contributor automatically, but for batch verification of all contributions run:
+```bash
+cargo run --release --bin phase2_batch_verify -- --outfolder ./setup/mpc-setup/output
+```
+
 📝 **Generate final output files**
 Run this code once to generate final outputs: 
 ```bash
@@ -91,4 +97,4 @@ cargo run --release --bin phase2_gen_files -- --outfolder ./setup/mpc-setup/outp
 When it prompts *Enter the last contributor's index* please type the *index* i of the last *phase2_acc_i.json* file generated in Phase-1.
 The final output files are: "sigma_preprocess.json", "sigma_verify.json" and "combined_sigma.json"
 
-**CRC output** is the *combined_sigma.json* file. 
+**CRC output** is the *combined_sigma.json* file.

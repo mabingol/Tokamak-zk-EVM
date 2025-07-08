@@ -31,9 +31,20 @@ struct Config {
 
     #[arg(long, value_name = "IS_CHECKING")]
     is_checking: bool,
+
+    #[arg(long, value_name = "PART_NO", default_value = "1")]
+    part_no: Option<usize>,
+
+    #[arg(long, value_name = "TOTAL_PART",default_value = "1")]
+    total_part: Option<usize>,
+
+    #[arg(long, value_name = "MERGE_PARTS")]
+    merge_parts: Option<bool>,
 }
 // cargo run --release --bin phase2_prepare -- --outfolder ./setup/mpc-setup/output --is-checking
 // cargo run --release --bin phase2_prepare -- --outfolder ./setup/mpc-setup/output
+//cargo run --release --bin phase2_prepare -- --outfolder ./setup/mpc-setup/output --total-part 16 --part-no 0
+//cargo run --release --bin phase2_prepare -- --outfolder ./setup/mpc-setup/output --total-part 16 --part-no 0 --merge-parts
 
 fn main() {
     let use_gpu: bool = env::var("USE_GPU")
@@ -45,17 +56,35 @@ fn main() {
         is_gpu_enabled = load_gpu_if_possible()
     }
     let config = Config::parse();
+    let outfolder = config.outfolder;
+    let start1 = Instant::now();
+    let part_no = config.part_no.unwrap();
+    let total_part = config.total_part.unwrap();
+    let is_merge = config.merge_parts.unwrap();
+    if is_merge {
+        let sigma : SigmaV2 = merge_all_parts(&outfolder,total_part);
+        sigma
+            .write_into_json(&format!("{}/phase2_acc_0.json", outfolder))
+            .expect("cannot write sigma into json");
+        return
+    }
+    if total_part > 1 {
+        assert_eq!(part_no < total_part, true);
+        assert_eq!(is_power_of_two_bitwise(total_part), true);
+    }
     let contributor_index = prompt_user_input("Enter the last phase-1 contributor's index:")
         .parse::<usize>()
         .expect("Please enter a valid number");
-    let outfolder = config.outfolder;
-    let start1 = Instant::now();
-
-    let sigma = process_prepare(contributor_index, &outfolder, is_gpu_enabled, config.is_checking);
-
-    sigma
-        .write_into_json(&format!("{}/phase2_acc_0.json", outfolder))
-        .expect("cannot write sigma into json");
+    let sigma = process_prepare(contributor_index, &outfolder, is_gpu_enabled, config.is_checking, total_part, part_no);
+    if config.part_no.is_some() && config.total_part.is_some() {
+        sigma
+            .write_into_json(&format!("{}/phase2_acc_0_{}_{}.json", outfolder,total_part, part_no))
+            .expect("cannot write sigma into json");
+    } else {
+        sigma
+            .write_into_json(&format!("{}/phase2_acc_0.json", outfolder))
+            .expect("cannot write sigma into json");
+    }
 
     save_contributor_info(
         &sigma,
@@ -73,8 +102,71 @@ fn main() {
         start1.elapsed().as_secs_f64()
     );
 }
+pub fn extend_boxed_2d_array(
+    target: &mut Box<[Box<[G1serde]>]>,
+    source: &Box<[Box<[G1serde]>]>
+) {
+    let mut temp: Vec<Vec<G1serde>> = target.iter().map(|row| row.to_vec()).collect();
+    let source_vec: Vec<Vec<G1serde>> = source.iter().map(|row| row.to_vec()).collect();
 
-fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bool, is_checking: bool) -> SigmaV2 {
+    temp.extend(source_vec);
+
+    *target = temp
+        .into_iter()
+        .map(|v| v.into_boxed_slice())
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+}
+fn merge_all_parts(outfolder: &str,total_part: usize) -> SigmaV2 {
+    let mut sigma = SigmaV2::read_from_json(&format!("{}/phase2_acc_0_{}_{}.json", outfolder,total_part, 0)).unwrap();
+    for part_no in 1.. total_part {
+        let next = SigmaV2::read_from_json(&format!("{}/phase2_acc_0_{}_{}.json", outfolder,total_part, part_no)).unwrap();
+        //check some conditions
+        assert_eq!(sigma.gamma,next.gamma);
+        assert_eq!(sigma.sigma.G,next.sigma.G);
+        assert_eq!(sigma.sigma.H,next.sigma.H);
+        assert_eq!(sigma.sigma.sigma_2.gamma,next.sigma.sigma_2.gamma);
+        assert_eq!(sigma.sigma.sigma_2.y,next.sigma.sigma_2.y);
+        assert_eq!(sigma.sigma.sigma_2.x,next.sigma.sigma_2.x);
+        assert_eq!(sigma.sigma.sigma_2.delta,next.sigma.sigma_2.delta);
+        assert_eq!(sigma.sigma.sigma_2.eta,next.sigma.sigma_2.eta);
+        assert_eq!(sigma.sigma.sigma_2.alpha,next.sigma.sigma_2.alpha);
+        assert_eq!(sigma.sigma.sigma_2.alpha2,next.sigma.sigma_2.alpha2);
+        assert_eq!(sigma.sigma.sigma_2.alpha3,next.sigma.sigma_2.alpha3);
+        assert_eq!(sigma.sigma.sigma_2.alpha4,next.sigma.sigma_2.alpha4);
+        assert_eq!(sigma.sigma.sigma_1.x,next.sigma.sigma_1.x);
+        assert_eq!(sigma.sigma.sigma_1.y,next.sigma.sigma_1.y);
+        assert_eq!(sigma.sigma.sigma_1.eta,next.sigma.sigma_1.eta);
+        assert_eq!(sigma.sigma.sigma_1.delta,next.sigma.sigma_1.delta);
+        assert_eq!(sigma.sigma.sigma_1.gamma_inv_o_inst,next.sigma.sigma_1.gamma_inv_o_inst);
+        assert_eq!(sigma.sigma.sigma_1.delta_inv_alphak_yi_ty,next.sigma.sigma_1.delta_inv_alphak_yi_ty);
+        assert_eq!(sigma.sigma.sigma_1.delta_inv_alpha4_xj_tx,next.sigma.sigma_1.delta_inv_alpha4_xj_tx);
+        assert_eq!(sigma.sigma.sigma_1.delta_inv_alphak_xh_tx,next.sigma.sigma_1.delta_inv_alphak_xh_tx);
+
+        extend_boxed_2d_array(
+            &mut sigma.sigma.sigma_1.eta_inv_li_o_inter_alpha4_kj,
+            &next.sigma.sigma_1.eta_inv_li_o_inter_alpha4_kj,
+        );
+
+        extend_boxed_2d_array(
+            &mut sigma.sigma.sigma_1.delta_inv_li_o_prv,
+            &next.sigma.sigma_1.delta_inv_li_o_prv,
+        );
+
+    }
+    sigma
+}
+
+fn is_power_of_two_bitwise(n: usize) -> bool {
+    // Handle the special case of 0, which is not a power of two
+    // (unless you define it as 2^negative_infinity, which is generally not the case)
+    if n == 0 {
+        false
+    } else {
+        (n & (n - 1)) == 0
+    }
+}
+pub fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bool, is_checking: bool, total_part :usize, part_no :usize) -> SigmaV2 {
     let start1 = Instant::now();
     let accumulator = format!("phase1_acc_{}.json", contributor_index);
     let setup_file_name = "setupParams.json";
@@ -82,6 +174,7 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
     let n = setup_params.n; // Number of constraints per subcircuit
 
     let s_max = setup_params.s_max;
+    assert_eq!(total_part <= s_max/2, true);
     let m_d = setup_params.m_D; // Total number of wires
     let l_pub_out = setup_params.l_pub_out;
     let l = setup_params.l; // Number of public I/O wires
@@ -277,10 +370,20 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
     println!("len of (eta_inv_li_o_inter_alpha4_kj) is {}", m_i * s_max);
     let batch_count = env::var("BATCH_COUNT").unwrap_or("512".to_string()).parse::<usize>().unwrap();
 
+    let mut start = 0;
+    let mut end = s_max;
+
+    if total_part > 1 {
+        start = part_no * s_max / total_part;
+        end = (part_no + 1) * s_max / total_part;
+        if part_no == total_part - 1 {
+            end = s_max;
+        }
+    }
+
     let start2 = Instant::now();
     process_qap_component_for_eta(
         "u",
-        s_max,
         m_i,
         l,
         batch_count,
@@ -290,11 +393,11 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
         &mut multpxy_coeffs,
         &mut eta_inv_li_o_inter_alpha4_kj,
         is_gpu_enabled,
+        start, end
     );
     println!("processing u for eta done");
     process_qap_component_for_eta(
         "v",
-        s_max,
         m_i,
         l,
         batch_count,
@@ -304,12 +407,12 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
         &mut multpxy_coeffs,
         &mut eta_inv_li_o_inter_alpha4_kj,
         is_gpu_enabled,
+        start, end
     );
     println!("processing v for eta done");
 
     process_qap_component_for_eta(
         "w",
-        s_max,
         m_i,
         l,
         batch_count,
@@ -319,12 +422,12 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
         &mut multpxy_coeffs,
         &mut eta_inv_li_o_inter_alpha4_kj,
         is_gpu_enabled,
+        start, end
     );
     println!("processing w for eta  done");
 
     process_qap_component_for_eta(
         "kjx",
-        s_max,
         m_i,
         0, // no offset needed for kj_x_vec
         batch_count,
@@ -334,10 +437,10 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
         &mut xy_coeffs,
         &mut eta_inv_li_o_inter_alpha4_kj,
         is_gpu_enabled,
+        start, end
     );
     println!("processing kjx for eta  done");
-
-    for i in 0.. s_max {
+    for i in start.. end {
         for j in 0..m_i {
             println!(
                 "eta_inv_li_o_inter_alpha4_kj[{}][{}] = {:?}",
@@ -370,10 +473,10 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
         l,
         m_i,
         m_d,
-        s_max,
         &mut multpxy_coeffs,
         &mut delta_inv_li_o_prv,
         batch_count,
+        start, end
     );
 
     process_qap_contributions_for_delta_inv(
@@ -384,10 +487,10 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
         l,
         m_i,
         m_d,
-        s_max,
         &mut multpxy_coeffs,
         &mut delta_inv_li_o_prv,
         batch_count,
+        start, end
     );
 
     process_qap_contributions_for_delta_inv(
@@ -398,12 +501,13 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
         l,
         m_i,
         m_d,
-        s_max,
         &mut multpxy_coeffs,
         &mut delta_inv_li_o_prv,
         batch_count,
+        start, end
     );
-    for i in 0.. s_max {
+
+    for i in start.. end {
         for j in (l + m_i)..m_d {
             println!("delta_inv_li_o_prv[{}][{}] = {:?}",j - (l + m_i),i, delta_inv_li_o_prv[j - (l + m_i)][i].0.x);
             if let Some(sigma_for_check) = &sigma_trusted{
@@ -451,7 +555,6 @@ fn process_prepare(contributor_index: usize, outfolder: &str, is_gpu_enabled: bo
 
 fn process_qap_component_for_eta<'a,F>(
     label: &str,
-    s_max: usize,
     m_i: usize,
     l: usize,
     batch_count: usize,
@@ -461,10 +564,12 @@ fn process_qap_component_for_eta<'a,F>(
     coeff_buf: &mut Vec<ScalarField>,
     result_matrix: &mut Box<[Box<[G1serde]>]>,
     is_gpu_enabled : bool,
+    start :usize, end :usize
 ) where
     F: Fn(usize, usize) -> Option<&'a DensePolynomialExt>,
 {
-    for i in 0..s_max {
+    println!("processing eta: labeled = {} for start = {} end = {}", label, start,end);
+    for i in start..end {
         let mut coeffs = Vec::with_capacity(coeff_buf.len() * batch_count);
         let mut indexes = Vec::with_capacity(batch_count);
 
@@ -503,12 +608,13 @@ fn process_qap_contributions_for_delta_inv(
     l: usize,
     m_i: usize,
     m_d: usize,
-    s_max: usize,
     multpxy_coeffs: &mut Vec<ScalarField>,
     delta_inv_li_o_prv: &mut Box<[Box<[G1serde]>]>,
     batch_count: usize,
+    start: usize, end: usize,
 ) {
-    for i in 0.. s_max {
+    println!("processing delta_inv: labeled = {} for start = {} end = {}", label, start,end);
+    for i in start.. end {
         let mut coeffs = Vec::with_capacity(multpxy_coeffs.len() * batch_count);
         let mut indexes = Vec::with_capacity(batch_count);
 

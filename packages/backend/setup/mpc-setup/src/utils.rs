@@ -1,10 +1,13 @@
+use serde_json::to_writer_pretty;
+use serde_json::from_reader;
+use std::env;
 use crate::conversions::{
     deserialize_g1serde, deserialize_g2serde, serialize_g1serde, serialize_g2serde,
 };
 pub(crate) use crate::conversions::{
     hash_to_g2, icicle_g1_generator, icicle_g2_generator, serialize_g1_affine,
 };
-use crate::sigma::SigmaV2;
+use crate::sigma::{SigmaV2, HASH_BYTES_LEN};
 use ark_bls12_381::Bls12_381;
 use ark_ec::pairing::PairingOutput;
 use ark_ec::{AffineRepr, PrimeGroup};
@@ -45,6 +48,7 @@ pub fn load_gpu_if_possible() -> bool {
         println!("METAL GPU is available");
         icicle_runtime::set_device(&device_metal_gpu).expect("Failed to set metal device");
         is_gpu_enabled = true;
+
     } else if icicle_runtime::is_device_available(&device_cuda_gpu) {
         println!("CUDA GPU is available");
         icicle_runtime::set_device(&device_cuda_gpu).expect("Failed to set cuda device");
@@ -330,6 +334,219 @@ pub fn verify1(
         );
     }
     false
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Phase2Proof {
+    pub contributor_index: usize,
+    pub v: Vec<u8>,
+    pub delta_t_g1: G1serde,
+    pub gamma_t_g1: G1serde,
+    pub eta_t_g1: G1serde,
+    pub pok_delta: G2serde,
+    pub pok_gamma: G2serde,
+    pub pok_eta: G2serde,
+    pub delta_t_g2: G2serde,
+    pub gamma_t_g2: G2serde,
+    pub eta_t_g2: G2serde,
+}
+impl_read_from_json!(Phase2Proof);
+impl_write_into_json!(Phase2Proof);
+impl Phase2Proof {
+    pub fn blake2b_hash(&self) -> [u8; HASH_BYTES_LEN] {
+        // Serialize without the hash field
+        let serialized = bincode::serialize(&self).expect("Serialization failed for Accumulator");
+
+        let hash = Blake2b::digest(&serialized);
+
+        let mut result = [0u8; HASH_BYTES_LEN];
+        result.copy_from_slice(&hash[..HASH_BYTES_LEN]);
+        result
+    }
+    pub fn verify(&self, sigma_old: &SigmaV2, sigma_cur: &SigmaV2) -> bool {
+        let v = hash_sigma(&sigma_old);
+
+        assert_eq!(sigma_old.sigma.G, sigma_cur.sigma.G);
+        assert_eq!(sigma_old.sigma.H, sigma_cur.sigma.H);
+
+        assert_eq!(
+            check_pok(&self.delta_t_g1, &sigma_cur.sigma.G, self.pok_delta, &v),
+            true
+        );
+        assert_eq!(
+            check_pok(&self.gamma_t_g1, &sigma_cur.sigma.G, self.pok_gamma, &v),
+            true
+        );
+        assert_eq!(
+            check_pok(&self.eta_t_g1, &sigma_cur.sigma.G, self.pok_eta, &v),
+            true
+        );
+
+        let ro_tGamma = ro(&self.gamma_t_g1, &v);
+        let ro_tEta = ro(&self.eta_t_g1, &v);
+        let ro_tDelta = ro(&self.delta_t_g1, &v);
+
+        assert_eq!(
+            consistent(
+                &[sigma_old.gamma, sigma_cur.gamma],
+                &[],
+                &[ro_tGamma, self.pok_gamma]
+            ),
+            true
+        );
+        assert_eq!(
+            consistent(
+                &[sigma_old.sigma.sigma_1.eta, sigma_cur.sigma.sigma_1.eta],
+                &[],
+                &[ro_tEta, self.pok_eta]
+            ),
+            true
+        );
+        assert_eq!(
+            consistent(
+                &[sigma_old.sigma.sigma_1.delta, sigma_cur.sigma.sigma_1.delta],
+                &[],
+                &[ro_tDelta, self.pok_delta]
+            ),
+            true
+        );
+
+        assert_eq!(
+            consistent(
+                &[sigma_old.gamma, sigma_cur.gamma],
+                &[],
+                &[sigma_old.sigma.sigma_2.gamma, sigma_cur.sigma.sigma_2.gamma]
+            ),
+            true
+        );
+        assert_eq!(
+            consistent(
+                &[sigma_old.sigma.sigma_1.eta, sigma_cur.sigma.sigma_1.eta],
+                &[],
+                &[sigma_old.sigma.sigma_2.eta, sigma_cur.sigma.sigma_2.eta]
+            ),
+            true
+        );
+        assert_eq!(
+            consistent(
+                &[sigma_old.sigma.sigma_1.delta, sigma_cur.sigma.sigma_1.delta],
+                &[],
+                &[sigma_old.sigma.sigma_2.delta, sigma_cur.sigma.sigma_2.delta]
+            ),
+            true
+        );
+
+        let consistent_all = sigma_cur
+            .sigma
+            .sigma_1
+            .gamma_inv_o_inst
+            .par_iter()
+            .zip(sigma_old.sigma.sigma_1.gamma_inv_o_inst.par_iter())
+            .all(|(cur, prev)| {
+                consistent(&[*cur, *prev], &[], &[sigma_cur.sigma.H, self.gamma_t_g2])
+            });
+        assert_eq!(consistent_all, true);
+        println!("consistent_all for gamma_inv_o_inst: {}", consistent_all);
+
+        let consistent_all = sigma_cur
+            .sigma
+            .sigma_1
+            .delta_inv_alpha4_xj_tx
+            .par_iter()
+            .zip(sigma_old.sigma.sigma_1.delta_inv_alpha4_xj_tx.par_iter())
+            .all(|(cur, prev)| {
+                consistent(&[*cur, *prev], &[], &[sigma_cur.sigma.H, self.delta_t_g2])
+            });
+        assert_eq!(consistent_all, true);
+
+        println!(
+            "consistent_all for delta_inv_alpha4_xj_tx: {}",
+            consistent_all
+        );
+        let consistent_all = sigma_cur
+            .sigma
+            .sigma_1
+            .delta_inv_alphak_xh_tx
+            .par_iter()
+            .zip(sigma_old.sigma.sigma_1.delta_inv_alphak_xh_tx.par_iter())
+            .all(|(cur_inner, old_inner)| {
+                cur_inner
+                    .par_iter()
+                    .zip(old_inner.par_iter())
+                    .all(|(cur, prev)| {
+                        consistent(&[*cur, *prev], &[], &[sigma_cur.sigma.H, self.delta_t_g2])
+                    })
+            });
+        assert_eq!(consistent_all, true);
+        println!(
+            "consistent_all for delta_inv_alphak_xh_tx: {}",
+            consistent_all
+        );
+
+        let consistent_all = sigma_cur
+            .sigma
+            .sigma_1
+            .delta_inv_alphak_yi_ty
+            .par_iter()
+            .zip(sigma_old.sigma.sigma_1.delta_inv_alphak_yi_ty.par_iter())
+            .all(|(cur_inner, old_inner)| {
+                cur_inner
+                    .par_iter()
+                    .zip(old_inner.par_iter())
+                    .all(|(cur, prev)| {
+                        consistent(&[*cur, *prev], &[], &[sigma_cur.sigma.H, self.delta_t_g2])
+                    })
+            });
+        assert_eq!(consistent_all, true);
+        println!(
+            "consistent_all for delta_inv_alphak_yi_ty: {}",
+            consistent_all
+        );
+
+        let consistent_all = sigma_cur
+            .sigma
+            .sigma_1
+            .eta_inv_li_o_inter_alpha4_kj
+            .par_iter()
+            .zip(
+                sigma_old
+                    .sigma
+                    .sigma_1
+                    .eta_inv_li_o_inter_alpha4_kj
+                    .par_iter(),
+            )
+            .all(|(cur_inner, old_inner)| {
+                cur_inner
+                    .par_iter()
+                    .zip(old_inner.par_iter())
+                    .all(|(cur, prev)| {
+                        consistent(&[*cur, *prev], &[], &[sigma_cur.sigma.H, self.eta_t_g2])
+                    })
+            });
+
+        assert_eq!(consistent_all, true);
+        println!(
+            "consistent_all for eta_inv_li_o_inter_alpha4_kj: {}",
+            consistent_all
+        );
+
+        let consistent_all = sigma_cur
+            .sigma
+            .sigma_1
+            .delta_inv_li_o_prv
+            .par_iter()
+            .zip(sigma_old.sigma.sigma_1.delta_inv_li_o_prv.par_iter())
+            .all(|(cur_inner, old_inner)| {
+                cur_inner
+                    .par_iter()
+                    .zip(old_inner.par_iter())
+                    .all(|(cur, prev)| {
+                        consistent(&[*cur, *prev], &[], &[sigma_cur.sigma.H, self.delta_t_g2])
+                    })
+            });
+        assert_eq!(consistent_all, true);
+        true
+    }
 }
 
 //type 2: compute2
