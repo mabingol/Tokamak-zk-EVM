@@ -163,7 +163,7 @@ async fn upload_contributor_file(config: &Config, contributor_index: u32, shared
     let mut my_new_file = File::default();
     let mut last_err = None;
 
-    for attempt in 1..=5 {
+    for attempt in 1..=50 {
         println!("Attempt {} to upload contributor file...", attempt);
         match drive
             .files
