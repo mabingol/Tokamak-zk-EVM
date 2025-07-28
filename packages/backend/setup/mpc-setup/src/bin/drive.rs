@@ -49,19 +49,19 @@ async fn main() {
     let contributor_index = prompt_user_input("enter your contributor index (uint >= 0) :")
         .parse::<u32>()
         .expect("Please enter a valid number");
+    let base_path = std::env::current_dir().unwrap();
+    let append = if base_path.ends_with("setup/mpc-setup/") {
+        "output/"
+    } else {
+        "setup/mpc-setup/output/"
+    };
+    let fpath = base_path.join(append);
     match config.mode {
         Mode::Upload => {
-            upload_contributor_file(&config, contributor_index, shared_folder_id.as_str()).await;
+            upload_contributor_file(config.phase_type,fpath.as_path().to_str().unwrap(), contributor_index, shared_folder_id.as_str()).await;
             println!("contributor files uploaded");
         }
         Mode::Download => {
-            let base_path = std::env::current_dir().unwrap();
-            let append = if base_path.ends_with("setup/mpc-setup/") {
-                "output/"
-            } else {
-                "setup/mpc-setup/output/"
-            };
-            let fpath = base_path.join(append);
             use_service_account_download(
                 config.phase_type,
                 fpath.as_path().to_str().unwrap(),
@@ -74,30 +74,31 @@ async fn main() {
         }
     }
 }
-async fn upload_contributor_file(config: &Config, contributor_index: u32, shared_folder_id: &str) {
+async fn upload_contributor_file( phase_type: u32,
+                                  dest_folder: &str, contributor_index: u32, shared_folder_id: &str) {
 
     let mail = env::var("MAIL_NOTIFICATION").unwrap();
 
     let archive_path = format!(
-        "output/phase{}_contributor_{}.zip",
-        config.phase_type, contributor_index
+        "{}phase{}_contributor_{}.zip",
+        dest_folder,phase_type, contributor_index
     );
 
     let contributor_file = build_file_path(
-        config.phase_type,
-        &config.outfolder,
+        phase_type,
+        &dest_folder,
         "contributor",
         contributor_index,
     );
     let acc_file = build_file_path(
-        config.phase_type,
-        &config.outfolder,
+        phase_type,
+        &dest_folder,
         "acc",
         contributor_index,
     );
     let proof_file = build_file_path(
-        config.phase_type,
-        &config.outfolder,
+        phase_type,
+        &dest_folder,
         "proof",
         contributor_index,
     );
@@ -134,7 +135,7 @@ async fn upload_contributor_file(config: &Config, contributor_index: u32, shared
             "name = '{}'",
             format!(
                 "phase{}_contributor_{}.zip",
-                config.phase_type, contributor_index
+                phase_type, contributor_index
             )
         );
         let query = format!("'{}' in parents and ({})", shared_folder_id, names_query);
@@ -151,7 +152,7 @@ async fn upload_contributor_file(config: &Config, contributor_index: u32, shared
     let metadata = File {
         name: Some(format!(
             "phase{}_contributor_{}.zip",
-            config.phase_type, contributor_index
+            phase_type, contributor_index
         )),
         mime_type: Some("application/zip".to_string()),
         parents: Some(vec![shared_folder_id.to_string()]),
@@ -383,8 +384,8 @@ fn unzip_flat(zip_file: &str, output_dir: &str) -> io::Result<()> {
 }
 fn build_file_path(phase_type: u32, base_path: &str, file_type: &str, index: u32) -> String {
     format!(
-        "{}/phase{}_{}_{}.{}",
-        "output",
+        "{}phase{}_{}_{}.{}",
+        base_path,
         phase_type,
         file_type,
         index,
