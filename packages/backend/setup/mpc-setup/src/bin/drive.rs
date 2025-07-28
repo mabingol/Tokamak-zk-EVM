@@ -56,7 +56,12 @@ async fn main() {
         }
         Mode::Download => {
             let base_path = std::env::current_dir().unwrap();
-            let fpath = base_path.join("output/");
+            let append = if base_path.ends_with("setup/mpc-setup/") {
+                "output/"
+            } else {
+                "setup/mpc-setup/output/"
+            };
+            let fpath = base_path.join(append);
             use_service_account_download(
                 config.phase_type,
                 fpath.as_path().to_str().unwrap(),
@@ -286,6 +291,7 @@ pub async fn use_service_account_download(
     for file_id in file_ids {
         // Prepare output path
         let output_path: PathBuf = [dest_folder, &format!("{}.zip", file_id)].iter().collect();
+        println!("Downloading file to {:?}", output_path);
         let mut file = fs::File::create(&output_path)
             .await
             .expect("Failed to create file");
